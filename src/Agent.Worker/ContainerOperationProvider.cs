@@ -1,12 +1,16 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.ServiceProcess;
 using System.Threading.Tasks;
+using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using System.Linq;
 using System.Threading;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker.Container;
+using Microsoft.VisualStudio.Services.Agent.Worker.Handlers;
 using Microsoft.VisualStudio.Services.Common;
+using Microsoft.Win32;
 
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
