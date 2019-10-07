@@ -1,16 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.ServiceProcess;
 using System.Threading.Tasks;
-using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using System.Linq;
 using System.Threading;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Agent.Worker.Container;
-using Microsoft.VisualStudio.Services.Agent.Worker.Handlers;
 using Microsoft.VisualStudio.Services.Common;
-using Microsoft.Win32;
 
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
@@ -56,10 +52,17 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             // Red Hat and CentOS 6 do not support the container feature
             throw new NotSupportedException(StringUtil.Loc("AgentDoesNotSupportContainerFeatureRhel6"));
 #else
-            var initProcessCgroup = File.ReadLines("/proc/1/cgroup");
-            if (initProcessCgroup.Any(x => x.IndexOf(":/docker/", StringComparison.OrdinalIgnoreCase) >= 0))
+            try 
             {
-                throw new NotSupportedException(StringUtil.Loc("AgentAlreadyInsideContainer"));
+                var initProcessCgroup = File.ReadLines("/proc/1/cgroup");
+                if (initProcessCgroup.Any(x => x.IndexOf(":/docker/", StringComparison.OrdinalIgnoreCase) >= 0))
+                {
+                    throw new NotSupportedException(StringUtil.Loc("AgentAlreadyInsideContainer"));
+                }
+            }
+            catch (Exception ex ) when (ex is FileNotFoundException || ex is DirectoryNotFoundException)
+            {
+                // if /proc/1/cgroup doesn't exist, we are not inside a container
             }
 #endif
 
