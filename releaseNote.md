@@ -9,14 +9,15 @@
 ## Bugs
 - Avoiding a null ref thrown by MakeRelative. (#2603)
 - Fix the issue with parsing definition name (#2563)
+- A customer reported an issue of a NPE when initializing secret masker (#2633)
 
 ## Misc
 - run as serviceaccount fix for environment vm scenario (#2607)
 - Updated to add a quote-trimmed version of a secret to the masker (#2577)
-- Updated mock ExecutionContext to output warnings to console (#2561) 
-- Converted command extensions to new format (#2566, #2568, #2572, #2573, #2579, #2584, #2587) 
+- Updated mock ExecutionContext to output warnings to console (#2561)
+- Converted command extensions to new format (#2566, #2568, #2572, #2573, #2579, #2584, #2587)
 
-## Agent Downloads  
+## Agent Downloads
 
 |         | Package                                                                                                       |
 | ------- | ----------------------------------------------------------------------------------------------------------- |
@@ -27,7 +28,7 @@
 | Linux ARM  | [vsts-agent-linux-arm-<AGENT_VERSION>.tar.gz](https://vstsagentpackage.azureedge.net/agent/<AGENT_VERSION>/vsts-agent-linux-arm-<AGENT_VERSION>.tar.gz) |
 | RHEL 6 x64  | [vsts-agent-rhel.6-x64-<AGENT_VERSION>.tar.gz](https://vstsagentpackage.azureedge.net/agent/<AGENT_VERSION>/vsts-agent-rhel.6-x64-<AGENT_VERSION>.tar.gz) |
 
-After Download:  
+After Download:
 
 ## Windows x64
 
