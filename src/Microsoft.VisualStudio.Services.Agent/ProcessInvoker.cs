@@ -113,10 +113,13 @@ namespace Microsoft.VisualStudio.Services.Agent
     {
         private ProcessInvoker _invoker;
 
+        public bool DisallowWorkerCommands {get; set; }
+
+
         public override void Initialize(IHostContext hostContext)
         {
             base.Initialize(hostContext);
-            _invoker = new ProcessInvoker(Trace);
+            _invoker = new ProcessInvoker(Trace, DisallowWorkerCommands);
         }
 
         public event EventHandler<ProcessDataReceivedEventArgs> OutputDataReceived;

@@ -60,7 +60,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             var handlerFactory = HostContext.GetService<IHandlerFactory>();
 
             // Set the task id and display name variable.
-            using (var scope =  ExecutionContext.Variables.CreateScope())
+            using (var scope = ExecutionContext.Variables.CreateScope())
             {
                 scope.Set(Constants.Variables.Task.DisplayName, DisplayName);
                 scope.Set(WellKnownDistributedTaskVariables.TaskInstanceId, Task.Id.ToString("D"));

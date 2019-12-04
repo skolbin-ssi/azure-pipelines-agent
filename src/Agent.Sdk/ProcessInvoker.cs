@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Agent.Sdk;
@@ -20,6 +21,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
     // The reason is we find a huge perf issue about process STDOUT/STDERR with those events.
     public sealed partial class ProcessInvoker : IDisposable
     {
+        public bool DisallowWorkerCommands {get; set; }
+
         private Process _proc;
         private Stopwatch _stopWatch;
         private int _asyncStreamReaderCount = 0;
@@ -61,9 +64,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
         public event EventHandler<ProcessDataReceivedEventArgs> OutputDataReceived;
         public event EventHandler<ProcessDataReceivedEventArgs> ErrorDataReceived;
 
-        public ProcessInvoker(ITraceWriter trace)
+        public ProcessInvoker(ITraceWriter trace, bool disallowWorkerCommands = false)
         {
             this.Trace = trace;
+            this.DisallowWorkerCommands = disallowWorkerCommands;
         }
 
         public Task<int> ExecuteAsync(
@@ -485,6 +489,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
                     string line = reader.ReadLine();
                     if (line != null)
                     {
+                        if (DisallowWorkerCommands)
+                        {
+                            line = Regex.Replace(line, "##vso", "##DISALLOWED-vso", RegexOptions.IgnoreCase);
+                        }
                         dataBuffer.Enqueue(line);
                         _outputProcessEvent.Set();
                     }
