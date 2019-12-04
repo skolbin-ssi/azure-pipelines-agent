@@ -565,7 +565,7 @@ namespace Agent.Plugins.Repository
             string arg = StringUtil.Format($"{command} {options}").Trim();
             context.Command($"git {arg}");
 
-            var processInvoker = new ProcessInvoker(context, true);
+            var processInvoker = new ProcessInvoker(context, disableWorkerCommands: true);
             processInvoker.OutputDataReceived += delegate (object sender, ProcessDataReceivedEventArgs message)
             {
                 context.Output(message.Data);
@@ -596,7 +596,7 @@ namespace Agent.Plugins.Repository
                 output = new List<string>();
             }
 
-            var processInvoker = new ProcessInvoker(context, true);
+            var processInvoker = new ProcessInvoker(context, disableWorkerCommands: true);
             processInvoker.OutputDataReceived += delegate (object sender, ProcessDataReceivedEventArgs message)
             {
                 output.Add(message.Data);
@@ -622,7 +622,7 @@ namespace Agent.Plugins.Repository
             string arg = StringUtil.Format($"{additionalCommandLine} {command} {options}").Trim();
             context.Command($"git {arg}");
 
-            var processInvoker = new ProcessInvoker(context, true);
+            var processInvoker = new ProcessInvoker(context, disableWorkerCommands: true);
             processInvoker.OutputDataReceived += delegate (object sender, ProcessDataReceivedEventArgs message)
             {
                 context.Output(message.Data);

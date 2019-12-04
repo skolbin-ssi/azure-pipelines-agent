@@ -21,8 +21,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
     // The reason is we find a huge perf issue about process STDOUT/STDERR with those events.
     public sealed partial class ProcessInvoker : IDisposable
     {
-        public bool DisallowWorkerCommands {get; set; }
-
         private Process _proc;
         private Stopwatch _stopWatch;
         private int _asyncStreamReaderCount = 0;
@@ -61,13 +59,15 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
             }
         }
 
+        public bool DisableWorkerCommands {get; set; }
+
         public event EventHandler<ProcessDataReceivedEventArgs> OutputDataReceived;
         public event EventHandler<ProcessDataReceivedEventArgs> ErrorDataReceived;
 
-        public ProcessInvoker(ITraceWriter trace, bool disallowWorkerCommands = false)
+        public ProcessInvoker(ITraceWriter trace, bool disableWorkerCommands = false)
         {
             this.Trace = trace;
-            this.DisallowWorkerCommands = disallowWorkerCommands;
+            this.DisableWorkerCommands = disableWorkerCommands;
         }
 
         public Task<int> ExecuteAsync(
@@ -489,9 +489,9 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
                     string line = reader.ReadLine();
                     if (line != null)
                     {
-                        if (DisallowWorkerCommands)
+                        if (DisableWorkerCommands)
                         {
-                            line = Regex.Replace(line, "##vso", "##DISALLOWED-vso", RegexOptions.IgnoreCase);
+                            line = Regex.Replace(line, "##vso", "**vso", RegexOptions.IgnoreCase);
                         }
                         dataBuffer.Enqueue(line);
                         _outputProcessEvent.Set();

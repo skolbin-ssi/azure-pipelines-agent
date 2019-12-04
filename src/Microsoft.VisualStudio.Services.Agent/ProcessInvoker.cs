@@ -112,14 +112,12 @@ namespace Microsoft.VisualStudio.Services.Agent
     public sealed class ProcessInvokerWrapper : AgentService, IProcessInvoker
     {
         private ProcessInvoker _invoker;
-
-        public bool DisallowWorkerCommands {get; set; }
-
+        public bool DisableWorkerCommands {get; set; }
 
         public override void Initialize(IHostContext hostContext)
         {
             base.Initialize(hostContext);
-            _invoker = new ProcessInvoker(Trace, DisallowWorkerCommands);
+            _invoker = new ProcessInvoker(Trace, DisableWorkerCommands);
         }
 
         public event EventHandler<ProcessDataReceivedEventArgs> OutputDataReceived;

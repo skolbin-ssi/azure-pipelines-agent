@@ -341,7 +341,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Common")]
-        public async Task DisallowWorkerCommands()
+        public async Task DisableWorkerCommands()
         {
             using (TestHostContext hc = new TestHostContext(this))
             {
@@ -355,7 +355,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
                  {
                      stdout.Add(e.Data);
                  };
-                processInvoker.DisallowWorkerCommands = true;
+                processInvoker.DisableWorkerCommands = true;
                 processInvoker.Initialize(hc);
                 exitCode = (TestUtil.IsWindows())
                     ? await processInvoker.ExecuteAsync("", "powershell.exe",  $@"-NoLogo -Sta -NoProfile -NonInteractive -ExecutionPolicy Unrestricted -Command ""Write-Host '##vso somecommand'""", null, CancellationToken.None)
@@ -371,7 +371,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
         [Fact]
         [Trait("Level", "L0")]
         [Trait("Category", "Common")]
-        public async Task AllowWorkerCommands()
+        public async Task EnableWorkerCommandsByDefault()
         {
             using (TestHostContext hc = new TestHostContext(this))
             {
@@ -381,7 +381,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
                 List<string> stdout = new List<string>();
 
                 var processInvoker = new ProcessInvokerWrapper();
-                processInvoker.DisallowWorkerCommands = false;
                 processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
                  {
                      stdout.Add(e.Data);
