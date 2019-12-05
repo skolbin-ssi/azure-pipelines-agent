@@ -130,7 +130,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 {
                     if (handlerData is AgentPluginHandlerData)
                     {
-                        // plugin handler always runs on the Host, the rumtime variables needs to the variable works on the Host, ex: file path variable System.DefaultWorkingDirectory
+                        // plugin handler always runs on the Host, the runtime variables needs to the variable works on the Host, ex: file path variable System.DefaultWorkingDirectory
                         Dictionary<string, VariableValue> variableCopy = new Dictionary<string, VariableValue>(StringComparer.OrdinalIgnoreCase);
                         foreach (var publicVar in ExecutionContext.Variables.Public)
                         {
