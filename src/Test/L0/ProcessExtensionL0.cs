@@ -51,7 +51,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
                     {
                         trace.Info($"Read env from {timeout.Id}");
                         int retries = 5;
-                        while (retries > 0)
+                        while (retries >= 0)
                         {
                             try
                             {
@@ -62,7 +62,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
                             catch (Exception ex)
                             {
                                 retries--;
-                                if (retries <= 0)
+                                if (retries < 0)
                                 {
                                     throw ex;
                                 }
