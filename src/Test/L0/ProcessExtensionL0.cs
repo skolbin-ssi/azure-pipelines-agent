@@ -49,17 +49,26 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
 
                     try
                     {
-                        await Task.Delay(2000);
                         trace.Info($"Read env from {timeout.Id}");
-                        var value = timeout.GetEnvironmentVariable(hc, envName);
-                        if (string.Equals(value, envValue, StringComparison.OrdinalIgnoreCase))
+                        int retries = 5;
+                        while (retries > 0)
                         {
-                            trace.Info($"Find the env.");
-                            return;
-                        }
-                        else
-                        {
-                            Assert.True(false, "Expected environment '" + envValue + "' did not match actual '" + value + "'");
+                            try
+                            {
+                                var value = timeout.GetEnvironmentVariable(hc, envName);
+                                Assert.True(string.Equals(value, envValue, StringComparison.OrdinalIgnoreCase), "Expected environment '" + envValue + "' did not match actual '" + value + "'");
+                                break;
+                            }
+                            catch (Exception ex)
+                            {
+                                retries--;
+                                if (retries <= 0)
+                                {
+                                    throw ex;
+                                }
+                                trace.Info($"Unable to get the environment variable, will retry. {retries} retries remaining");
+                                await Task.Delay(2000);
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -67,12 +76,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests
                         trace.Error(ex);
                         Assert.True(false, "Fail to retrive process environment variable due to exception: " + ex.Message + "\n" + ex.StackTrace);
                     }
-
-                    Assert.True(false, "Fail to retrive process environment variable.");
                 }
                 finally
                 {
-                    try 
+                    try
                     {
                         sleep?.Kill();
                     }
