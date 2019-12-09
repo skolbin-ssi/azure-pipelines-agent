@@ -127,6 +127,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                             HostContext.SecretMasker.AddValue(variable.Value.Value.Trim(quoteChar));
                         }
                     }
+                    // also, we escape some characters for variables when we print them out in debug mode. We need to
+                    // add the escaped version of these secrets as well
+                    var escapedSecret = variable.Value.Value.Replace("%", "%25")
+                                                            .Replace("\r", "%0D")
+                                                            .Replace("\n", "%0A");
+                    HostContext.SecretMasker.AddValue(escapedSecret);
                 }
             }
 
