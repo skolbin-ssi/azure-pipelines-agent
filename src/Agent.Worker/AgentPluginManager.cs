@@ -160,18 +160,35 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
             // construct plugin context
             var target = context.StepTarget();
+            Variables.TranslationMethod translateToHostPath = null;
+            ContainerInfo containerInfo = target as ContainerInfo;
+            // Since plugins run on the host, but the inputs and variables have already been translated
+            // to the container path, we need to convert them back to the host path
+            // TODO: look to see if there is a better way to not have translate these back
+            if (containerInfo != null)
+            {
+                var newInputs = new Dictionary<string,string>();
+                foreach (var var in inputs)
+                {
+                    newInputs[var.Key] = containerInfo.TranslateToHostPath(var.Value);
+                }
+                inputs = newInputs;
+
+                translateToHostPath = (string val) => { return containerInfo.TranslateToHostPath(val); };
+            }
+
             AgentTaskPluginExecutionContext pluginContext = new AgentTaskPluginExecutionContext
             {
                 Inputs = inputs,
                 Repositories = context.Repositories,
                 Endpoints = context.Endpoints,
-                Container = target is ContainerInfo ? target as ContainerInfo : null, //TODO: Figure out if this needs to have all the containers or just the one for the current step
+                Container = containerInfo, //TODO: Figure out if this needs to have all the containers or just the one for the current step
                 JobSettings = context.JobSettings,
             };
 
             // variables
-            runtimeVariables.CopyInto(pluginContext.Variables);
-            context.TaskVariables.CopyInto(pluginContext.TaskVariables);
+            runtimeVariables.CopyInto(pluginContext.Variables, translateToHostPath);
+            context.TaskVariables.CopyInto(pluginContext.TaskVariables, translateToHostPath);
 
             using (var processInvoker = HostContext.CreateService<IProcessInvoker>())
             {

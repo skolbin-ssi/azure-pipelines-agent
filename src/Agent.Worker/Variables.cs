@@ -51,8 +51,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         private ConcurrentDictionary<string, Variable> _expanded;
 
         public delegate string TranslationMethod(string val);
-        public TranslationMethod StringTranslator = val => val ;
+        public TranslationMethod StringTranslator = DefaultStringTranslator;
 
+        private static string DefaultStringTranslator(string val)
+        {
+            return val;
+        }
 
         public IEnumerable<KeyValuePair<string, string>> Public
         {
@@ -577,15 +581,20 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
         }
 
-        public void CopyInto(Dictionary<string, VariableValue> target)
+        public void CopyInto(Dictionary<string, VariableValue> target, TranslationMethod translation = null)
         {
+            if (translation == null)
+            {
+                translation = DefaultStringTranslator;
+            }
+
             foreach (var var in this.Public)
             {
-                target[var.Key] = var.Value;
+                target[var.Key] = translation(var.Value);
             }
             foreach (var var in this.Private)
             {
-                target[var.Key] = new VariableValue(var.Value, true);
+                target[var.Key] = new VariableValue(translation(var.Value), true);
             }
         }
 
