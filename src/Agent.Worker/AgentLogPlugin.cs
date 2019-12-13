@@ -137,19 +137,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 // plugins
                 pluginContext.PluginAssemblies.AddRange(_logPlugins.Values.Select(x => x.AssemblyName));
 
-                var target = context.StepTarget();
-                Variables.TranslationMethod translateToHostPath = Variables.DefaultStringTranslator;
-
-                ContainerInfo containerInfo = target as ContainerInfo;
-                // Since plugins run on the host, but the inputs and variables have already been translated
-                // to the container path, we need to convert them back to the host path
-                // TODO: look to see if there is a better way to not have translate these back
-                if (containerInfo != null)
-                {
-                    translateToHostPath = (string val) => { return containerInfo.TranslateToHostPath(val); };
-                }
                 // variables
-                context.Variables.CopyInto(pluginContext.Variables, translateToHostPath);
+                context.Variables.CopyInto(pluginContext.Variables, Variables.DefaultStringTranslator);
 
                 // steps
                 foreach (var step in steps)
