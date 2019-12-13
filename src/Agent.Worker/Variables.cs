@@ -53,7 +53,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public delegate string TranslationMethod(string val);
         public TranslationMethod StringTranslator = DefaultStringTranslator;
 
-        private static string DefaultStringTranslator(string val)
+        public static string DefaultStringTranslator(string val)
         {
             return val;
         }
@@ -581,12 +581,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
         }
 
-        public void CopyInto(Dictionary<string, VariableValue> target, TranslationMethod translation = null)
+        public void CopyInto(Dictionary<string, VariableValue> target, TranslationMethod translation)
         {
-            if (translation == null)
-            {
-                translation = DefaultStringTranslator;
-            }
+            ArgUtil.NotNull(target, nameof(target));
+            ArgUtil.NotNull(translation, nameof(translation));
 
             foreach (var var in this.Public)
             {
