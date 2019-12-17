@@ -7,12 +7,6 @@ using System.Collections.Generic;
 
 namespace Microsoft.VisualStudio.Services.Agent
 {
-    public enum RunMode
-    {
-        Normal, // Keep "Normal" first (default value).
-        Local,
-    }
-
     public enum WellKnownDirectory
     {
         Bin,
@@ -51,7 +45,7 @@ namespace Microsoft.VisualStudio.Services.Agent
         /// <summary>Name of environment variable holding the path.</summary>
         public static string PathVariable
         {
-            get => 
+            get =>
                 PlatformUtil.RunningOnWindows
                 ? "Path"
                 : "PATH";
@@ -297,7 +291,6 @@ namespace Microsoft.VisualStudio.Services.Agent
                 public static readonly string RetainDefaultEncoding = "agent.retainDefaultEncoding";
                 public static readonly string ReadOnlyVariables = "agent.readOnlyVariables";
                 public static readonly string RootDirectory = "agent.RootDirectory";
-                public static readonly string RunMode = "agent.runmode";
                 public static readonly string ServerOMDirectory = "agent.ServerOMDirectory";
                 public static readonly string ServicePortPrefix = "agent.services";
                 public static readonly string SslCAInfo = "agent.cainfo";
@@ -461,7 +454,6 @@ namespace Microsoft.VisualStudio.Services.Agent
                 Agent.RetainDefaultEncoding,
                 Agent.ReadOnlyVariables,
                 Agent.RootDirectory,
-                Agent.RunMode,
                 Agent.ServerOMDirectory,
                 Agent.ServicePortPrefix,
                 Agent.SslCAInfo,
@@ -497,6 +489,7 @@ namespace Microsoft.VisualStudio.Services.Agent
                 Build.SourcesDirectory,
                 Build.StagingDirectory,
                 Build.SyncSources,
+                Build.UseServerWorkspaces,
                 // Common variables
                 Common.TestResultsDirectory,
                 // Feature variables

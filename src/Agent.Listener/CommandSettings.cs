@@ -20,7 +20,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
         private readonly string[] validCommands =
         {
             Constants.Agent.CommandLine.Commands.Configure,
-            Constants.Agent.CommandLine.Commands.LocalRun,
             Constants.Agent.CommandLine.Commands.Remove,
             Constants.Agent.CommandLine.Commands.Run,
             Constants.Agent.CommandLine.Commands.Warmup,
@@ -90,7 +89,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
 
         // Commands.
         public bool Configure => TestCommand(Constants.Agent.CommandLine.Commands.Configure);
-        public bool LocalRun => TestCommand(Constants.Agent.CommandLine.Commands.LocalRun);
         public bool Remove => TestCommand(Constants.Agent.CommandLine.Commands.Remove);
         public bool Run => TestCommand(Constants.Agent.CommandLine.Commands.Run);
         public bool Warmup => TestCommand(Constants.Agent.CommandLine.Commands.Warmup);
