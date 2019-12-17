@@ -1,5 +1,13 @@
 #!/bin/bash
 
+###############################################################################
+#
+#  ./mkrelease.sh [version]
+#        - Creates a release branch and updates necessary files for creating a
+#          relase named [version] of the agent
+#
+###############################################################################
+
 set -e
 
 NEW_RELEASE=$1
