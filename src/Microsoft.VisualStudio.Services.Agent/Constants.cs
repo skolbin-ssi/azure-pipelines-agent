@@ -51,7 +51,7 @@ namespace Microsoft.VisualStudio.Services.Agent
         /// <summary>Name of environment variable holding the path.</summary>
         public static string PathVariable
         {
-            get => 
+            get =>
                 PlatformUtil.RunningOnWindows
                 ? "Path"
                 : "PATH";
@@ -497,6 +497,7 @@ namespace Microsoft.VisualStudio.Services.Agent
                 Build.SourcesDirectory,
                 Build.StagingDirectory,
                 Build.SyncSources,
+                Build.UseServerWorkspaces,
                 // Common variables
                 Common.TestResultsDirectory,
                 // Feature variables
