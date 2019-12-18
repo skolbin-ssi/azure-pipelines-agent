@@ -4,7 +4,7 @@
 #
 #  ./mkrelease.sh [version]
 #        - Creates a release branch and updates necessary files for creating a
-#          relase named [version] of the agent
+#          release named [version] of the agent
 #
 ###############################################################################
 
@@ -38,12 +38,12 @@ then
     exit -1
   fi
 else
-  echo "Invalid version '${NEW_RELEASE}'"
+  echo "Invalid version '${NEW_RELEASE}'. Version must be in the form of <major>.<minor>.<patch> where each level is 0-999"
   exit -1
 fi
 
 # make release branch
-NEW_BRANCH="release/${NEW_RELEASE}"
+NEW_BRANCH="releases/${NEW_RELEASE}"
 ${GIT} checkout -b ${NEW_BRANCH}
 
 # edit agentversion
