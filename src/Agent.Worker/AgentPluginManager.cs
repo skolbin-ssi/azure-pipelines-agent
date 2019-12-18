@@ -168,12 +168,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             // TODO: look to see if there is a better way to not have translate these back
             if (containerInfo != null)
             {
-                var newInputs = new Dictionary<string,string>();
-                foreach (var var in inputs)
+                foreach (var key in inputs.Keys)
                 {
-                    newInputs[var.Key] = containerInfo.TranslateToHostPath(var.Value);
+                    inputs[key] = containerInfo.TranslateToHostPath(inputs[key]);
                 }
-                inputs = newInputs;
 
                 translateToHostPath = (string val) => { return containerInfo.TranslateToHostPath(val); };
             }
