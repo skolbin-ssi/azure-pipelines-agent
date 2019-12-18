@@ -119,7 +119,7 @@ function cmd_package ()
         echo "You must build first.  Expecting to find ${LAYOUT_DIR}/bin"
     fi
 
-    agent_ver=$("${LAYOUT_DIR}/bin/Agent.Listener" --version | tail -n 1) || failed "version"
+    agent_ver=$(cat "${SCRIPT_DIR}/agentversion" | tail -n 1) || failed "version"
     agent_pkg_name="vsts-agent-${RUNTIME_ID}-${agent_ver}"
 
     # TEMPORARY - need to investigate why Agent.Listener --version is throwing an error on OS X
@@ -142,7 +142,7 @@ function cmd_package ()
 
     if [[ ("$CURRENT_PLATFORM" == "linux") || ("$CURRENT_PLATFORM" == "darwin") ]]; then
         tar_name="${agent_pkg_name}.tar.gz"
-        echo "Creating $tar_name in ${LAYOUT_DIR}"
+        echo "Creating $tar_name in ${PACKAGE_DIR}"
         tar -czf "${tar_name}" -C "${LAYOUT_DIR}" .
     elif [[ ("$CURRENT_PLATFORM" == "windows") ]]; then
         zip_name="${agent_pkg_name}.zip"
@@ -178,7 +178,8 @@ LAYOUT_DIR="$SCRIPT_DIR/../_layout/$RUNTIME_ID"
 DOWNLOAD_DIR="$SCRIPT_DIR/../_downloads/$RUNTIME_ID/netcore2x"
 PACKAGE_DIR="$SCRIPT_DIR/../_package/$RUNTIME_ID"
 INTEGRATION_DIR="$SCRIPT_DIR/../_layout/integrations"
-NODE="${LAYOUT_DIR}/externals/node10/bin/node"
+NODE="${SCRIPT_DIR}/../_layout/${DETECTED_RUNTIME_ID}/externals/node10/bin/node"
+
 
 if [[ (! -d "${DOTNETSDK_INSTALLDIR}") || (! -e "${DOTNETSDK_INSTALLDIR}/.${DOTNETSDK_VERSION}") || (! -e "${DOTNETSDK_INSTALLDIR}/dotnet") ]]; then
 
