@@ -13,6 +13,7 @@
                 <ModulePath>.*runtimecontracts\.dll</ModulePath>
                 <ModulePath>.*test\.dll</ModulePath>
                 <ModulePath>.*system\.identitymodel\.tokens\.jwt\.dll</ModulePath>
+                <ModulePath>.*microsoft\..*\.dll</ModulePath>
               </Exclude>
             </ModulePaths>
           </CodeCoverage>
