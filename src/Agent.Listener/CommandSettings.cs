@@ -46,8 +46,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             Constants.Agent.CommandLine.Flags.Once,
             Constants.Agent.CommandLine.Flags.SslSkipCertValidation,
             Constants.Agent.CommandLine.Flags.Unattended,
-            Constants.Agent.CommandLine.Flags.Version,
-            Constants.Agent.CommandLine.Flags.WhatIf
+            Constants.Agent.CommandLine.Flags.Version
         };
 
         private readonly string[] validArgs =
@@ -66,7 +65,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             Constants.Agent.CommandLine.Args.MonitorSocketAddress,
             Constants.Agent.CommandLine.Args.NotificationPipeName,
             Constants.Agent.CommandLine.Args.Password,
-            Constants.Agent.CommandLine.Args.Phase,
             Constants.Agent.CommandLine.Args.Pool,
             Constants.Agent.CommandLine.Args.ProjectName,
             Constants.Agent.CommandLine.Args.ProxyPassword,
@@ -83,8 +81,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             Constants.Agent.CommandLine.Args.UserName,
             Constants.Agent.CommandLine.Args.WindowsLogonAccount,
             Constants.Agent.CommandLine.Args.WindowsLogonPassword,
-            Constants.Agent.CommandLine.Args.Work,
-            Constants.Agent.CommandLine.Args.Yml
+            Constants.Agent.CommandLine.Args.Work
         };
 
         // Commands.
@@ -101,7 +98,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
         public bool DeploymentGroup => TestFlag(Constants.Agent.CommandLine.Flags.MachineGroup) || TestFlag(Constants.Agent.CommandLine.Flags.DeploymentGroup);
         public bool DeploymentPool => TestFlag(Constants.Agent.CommandLine.Flags.DeploymentPool);
         public bool EnvironmentVMResource => TestFlag(Constants.Agent.CommandLine.Flags.Environment);
-        public bool WhatIf => TestFlag(Constants.Agent.CommandLine.Flags.WhatIf);
         public bool GitUseSChannel => TestFlag(Constants.Agent.CommandLine.Flags.GitUseSChannel);
         public bool RunOnce => TestFlag(Constants.Agent.CommandLine.Flags.Once);
 
@@ -256,11 +252,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                 validator: Validators.AuthSchemeValidator);
         }
 
-        public string GetMatrix()
-        {
-            return GetArg(Constants.Agent.CommandLine.Args.Matrix);
-        }
-
         public string GetPassword()
         {
             return GetArgOrPrompt(
@@ -268,11 +259,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                 description: StringUtil.Loc("Password"),
                 defaultValue: string.Empty,
                 validator: Validators.NonEmptyValidator);
-        }
-
-        public string GetPhase()
-        {
-            return GetArg(Constants.Agent.CommandLine.Args.Phase);
         }
 
         public string GetPool()
@@ -458,11 +444,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
         public string GetStartupType()
         {
             return GetArg(Constants.Agent.CommandLine.Args.StartupType);
-        }
-
-        public string GetYml()
-        {
-            return GetArg(Constants.Agent.CommandLine.Args.Yml);
         }
 
         public string GetProxyUrl()
