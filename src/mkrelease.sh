@@ -16,6 +16,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INTEGRATION_DIR="${SCRIPT_DIR}/../_layout/integrations"
 EDITOR="${EDITOR:-vi}"
 GIT_HUB_API_URL_ROOT="https://api.github.com/repos/microsoft/azure-pipelines-agent"
+GIT_HUB_SEARCH_API_URL_ROOT="https://api.github.com/search"
 AGENT_RELEASE_PIPELINE_URL="https://dev.azure.com/mseng/AzureDevOps/_build?definitionId=5845"
 CURL=curl
 NODE=node
@@ -48,9 +49,11 @@ fi
 echo ${NEW_RELEASE} > ${SCRIPT_DIR}/agentversion
 
 # fetch PRs
+LAST_RELEASE_DATE="$(${CURL} --silent ${GIT_HUB_API_URL_ROOT}/releases/latest | ${NODE} -pe "JSON.parse(fs.readFileSync(0)).published_at")"
+echo "Fetching PRs merged since ${LAST_RELEASE_DATE}"
+PRS="$(${CURL} --silent "${GIT_HUB_SEARCH_API_URL_ROOT}/issues?q=type:pr+is:merged+repo:microsoft/azure-pipelines-agent+merged:>=${LAST_RELEASE_DATE}&sort=closed_at&order=asc" | ${NODE} -e "JSON.parse(fs.readFileSync(0)).items.forEach(function (item) { console.log(' - ' + item.title + ' (#' + item.number + ')');});")"
+
 RELEASE_NOTES=$(cat ${SCRIPT_DIR}/../releaseNote.md)
-# TODO: Update this REST call to only return PRs closed since last release (right now, it returns last 30 PRs closed)
-PRS="$(${CURL} --silent "${GIT_HUB_API_URL_ROOT}/pulls?state=closed&sort=created&direction=desc" | ${NODE} -e "JSON.parse(fs.readFileSync(0)).forEach(function (item) { console.log(' - ' + item.title + ' (#' + item.number + ')');});")"
 echo -e "${PRS}\n\n${RELEASE_NOTES}" > ${SCRIPT_DIR}/../releaseNote.md
 
 # edit releaseNotes.md
