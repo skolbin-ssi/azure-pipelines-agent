@@ -72,14 +72,6 @@ function cmd_build ()
     mkdir -p "${LAYOUT_DIR}/bin/en-US"
     grep --invert-match '^ *"CLI-WIDTH-' ./Misc/layoutbin/en-US/strings.json > "${LAYOUT_DIR}/bin/en-US/strings.json"
 
-    heading "Generating Integration Files"
-    mkdir -p "${INTEGRATION_DIR}"
-    ${NODE} ./versionify.js ./Misc/InstallAgentPackage.template.xml "${INTEGRATION_DIR}/InstallAgentPackage.xml"
-    AGENT_VERSION_PATH=${AGENT_VERSION//./-}
-    mkdir -p "${INTEGRATION_DIR}/PublishVSTSAgent-${AGENT_VERSION_PATH}"
-    ${NODE} ./versionify.js ./Misc/PublishVSTSAgent.template.ps1 "${INTEGRATION_DIR}/PublishVSTSAgent-${AGENT_VERSION_PATH}/PublishVSTSAgent-${AGENT_VERSION_PATH}.ps1"
-    ${NODE} ./versionify.js ./Misc/UnpublishVSTSAgent.template.ps1 "${INTEGRATION_DIR}/PublishVSTSAgent-${AGENT_VERSION_PATH}/UnpublishVSTSAgent-${AGENT_VERSION_PATH}.ps1"
-
 }
 
 function cmd_layout ()
@@ -177,9 +169,6 @@ echo "Building for runtime ID: $RUNTIME_ID"
 LAYOUT_DIR="$SCRIPT_DIR/../_layout/$RUNTIME_ID"
 DOWNLOAD_DIR="$SCRIPT_DIR/../_downloads/$RUNTIME_ID/netcore2x"
 PACKAGE_DIR="$SCRIPT_DIR/../_package/$RUNTIME_ID"
-INTEGRATION_DIR="$SCRIPT_DIR/../_layout/integrations"
-NODE="${SCRIPT_DIR}/../_layout/${DETECTED_RUNTIME_ID}/externals/node10/bin/node"
-
 
 if [[ (! -d "${DOTNETSDK_INSTALLDIR}") || (! -e "${DOTNETSDK_INSTALLDIR}/.${DOTNETSDK_VERSION}") || (! -e "${DOTNETSDK_INSTALLDIR}/dotnet") ]]; then
 
