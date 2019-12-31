@@ -17,7 +17,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
     /// <summary>
     /// This class manages the tracking config files used by the worker to determine where sources are located.
     /// There is a single file per pipeline. We use a hash to determine if the file needs to be updated.
-    /// The tracking configs are "garbage collected" if any of the repositories are changed. 
+    /// The tracking configs are "garbage collected" if any of the repositories are changed.
     /// I.e. the repo url is different than last build.
     /// The config file format has changed over time and must remain backwards compatible to avoid unneeded recloning.
     /// </summary>
@@ -85,9 +85,15 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                 // The workaround is to force the build directory to be different across all concurrent
                 // hosted builds (for TFVC). The agent ID will be unique across all concurrent hosted
                 // builds so that can safely be used as the build directory.
-                ArgUtil.Equal(default(int), topLevelConfig.LastBuildDirectoryNumber, nameof(topLevelConfig.LastBuildDirectoryNumber));
+
+                // This line recently started causing issues described in FEEDBACKTICKET 1649233
+                // We think this is related to the refactor of topLevelConfig going from a local variable in this method
+                // to being a private class variable of this object.
+                // ArgUtil.Equal(default(int), topLevelConfig.LastBuildDirectoryNumber, nameof(topLevelConfig.LastBuildDirectoryNumber));
+
                 var configurationStore = HostContext.GetService<IConfigurationStore>();
                 AgentSettings settings = configurationStore.GetSettings();
+                Trace.Verbose($"Overriding LastBuildDirectoryNumber from {topLevelConfig.LastBuildDirectoryNumber} to {settings.AgentId}");
                 topLevelConfig.LastBuildDirectoryNumber = settings.AgentId;
             }
             else
@@ -108,7 +114,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             TrackingConfig newConfig,
             TrackingConfig previousConfig)
         {
-            return 
+            return
                 newConfig != null &&
                 previousConfig != null &&
                 string.Equals(newConfig.HashKey, previousConfig.HashKey, StringComparison.OrdinalIgnoreCase);
@@ -174,7 +180,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
         }
 
         public void MarkForGarbageCollection(
-            IExecutionContext executionContext, 
+            IExecutionContext executionContext,
             TrackingConfig config)
         {
             Trace.Entering();
@@ -234,7 +240,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
         }
 
         public void MarkExpiredForGarbageCollection(
-            IExecutionContext executionContext, 
+            IExecutionContext executionContext,
             TimeSpan expiration)
         {
             Trace.Entering();
@@ -336,7 +342,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
         }
 
         private TrackingConfig LoadIfExists(
-            IExecutionContext executionContext, 
+            IExecutionContext executionContext,
             string file)
         {
             Trace.Entering();
@@ -398,13 +404,15 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             string topLevelFile = GetTopLevelTrackingFileLocation();
             TopLevelTrackingConfig topLevelConfig = null;
 
-            Trace.Verbose($"Loading top-level tracking config if exists: {topLevelFile}");
+
             if (!File.Exists(topLevelFile))
             {
+                Trace.Verbose($"Creating default top-level tracking config: {topLevelFile}");
                 topLevelConfig = new TopLevelTrackingConfig();
             }
             else
             {
+                Trace.Verbose($"Loading top-level tracking config: {topLevelFile}");
                 topLevelConfig = JsonConvert.DeserializeObject<TopLevelTrackingConfig>(File.ReadAllText(topLevelFile));
                 if (topLevelConfig == null)
                 {
@@ -424,6 +432,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                             topLevelConfig.LastBuildDirectoryNumber = lastBuildNumber;
                         }
                     }
+                    Trace.Verbose($"Top-level tracking config was corrupted. Setting LastBuildDirectoryNumber to {topLevelConfig.LastBuildDirectoryNumber}");
                 }
             }
 
@@ -462,7 +471,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
         }
 
         private string ComputeHash(
-            IExecutionContext executionContext, 
+            IExecutionContext executionContext,
             IList<RepositoryTrackingInfo> repositories)
         {
             ArgUtil.NotNull(executionContext, nameof(executionContext));
@@ -477,7 +486,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
         }
 
         private void UpdateJobRunProperties(
-            IExecutionContext executionContext, 
+            IExecutionContext executionContext,
             TrackingConfig config)
         {
             Trace.Entering();
