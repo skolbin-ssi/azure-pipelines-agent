@@ -32,7 +32,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             base.Initialize(hostContext);
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                try
+                if (assembly.FullName.StartsWith("Agent.", StringComparison.OrdinalIgnoreCase))
                 {
                     foreach (var type in assembly.GetTypes())
                     {
@@ -53,10 +53,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                             _supportedTasks[taskPlugin.Id].Add(pluginTypeName);
                         }
                     }
-                }
-                catch (ReflectionTypeLoadException)
-                {
-                    // ignore exceptions for assemblies we cannnot load
                 }
             }
         }
