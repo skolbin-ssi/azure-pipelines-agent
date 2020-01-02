@@ -10,7 +10,6 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Globalization;
 using Microsoft.TeamFoundation.DistributedTask.Pipelines;
-using Microsoft.VisualStudio.Services.Common;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
 {
@@ -468,21 +467,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                 gcDirectory,
                 StringUtil.Format("{0}.json", Guid.NewGuid()));
             return file;
-        }
-
-        private string ComputeHash(
-            IExecutionContext executionContext,
-            IList<RepositoryTrackingInfo> repositories)
-        {
-            ArgUtil.NotNull(executionContext, nameof(executionContext));
-            ArgUtil.ListNotNullOrEmpty(repositories, nameof(repositories));
-
-            Trace.Verbose("Calculating pipeline workspace hash.");
-            var collectionId = executionContext.Variables.Get(Constants.Variables.System.CollectionId);
-            var definitionId = executionContext.Variables.Get(Constants.Variables.System.DefinitionId);
-            string hash = TrackingConfigHashAlgorithm.ComputeHash(collectionId, definitionId, repositories);
-            Trace.Verbose($"Hash: {hash}");
-            return hash;
         }
 
         private void UpdateJobRunProperties(
