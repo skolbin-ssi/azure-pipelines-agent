@@ -42,7 +42,7 @@ namespace Agent.Plugins.Repository
         public async Task GetAsync(string localPath, bool quiet = false)
         {
             ArgUtil.NotNullOrEmpty(localPath, nameof(localPath));
-            await RunCommandAsync(FormatFlags.OmitCollectionUrl, quiet, "get", $"-version:{SourceVersion}", "-recursive", "-overwrite", localPath);
+            await RunCommandAsync(FormatFlags.OmitCollectionUrl, quiet, 3, "get", $"-version:{SourceVersion}", "-recursive", "-overwrite", localPath);
         }
 
         public string ResolvePath(string serverPath)
@@ -93,33 +93,35 @@ namespace Agent.Plugins.Repository
 
             ExecutionContext.Command($"{toolPath} {argLine}");
 
-            var processInvoker = new ProcessInvoker(ExecutionContext);
-            processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs args) =>
+            using (var processInvoker = new ProcessInvoker(ExecutionContext))
             {
-                if (!string.IsNullOrEmpty(args.Data))
+                processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs args) =>
                 {
-                    ExecutionContext.Output(args.Data);
-                }
-            };
-            processInvoker.ErrorDataReceived += (object sender, ProcessDataReceivedEventArgs args) =>
-            {
-                if (!string.IsNullOrEmpty(args.Data))
+                    if (!string.IsNullOrEmpty(args.Data))
+                    {
+                        ExecutionContext.Output(args.Data);
+                    }
+                };
+                processInvoker.ErrorDataReceived += (object sender, ProcessDataReceivedEventArgs args) =>
                 {
-                    ExecutionContext.Output(args.Data);
+                    if (!string.IsNullOrEmpty(args.Data))
+                    {
+                        ExecutionContext.Output(args.Data);
+                    }
+                };
+
+                processInvoker.ExecuteAsync(ExecutionContext.Variables.GetValueOrDefault("system.defaultworkingdirectory")?.Value, toolPath, argLine, null, true, CancellationToken.None).GetAwaiter().GetResult();
+
+                if (!string.IsNullOrEmpty(clientCertPassword))
+                {
+                    ExecutionContext.Debug($"Set TF_ADDITIONAL_JAVA_ARGS=-Djavax.net.ssl.keyStore={jksFile} -Djavax.net.ssl.keyStorePassword={clientCertPassword}");
+                    AdditionalEnvironmentVariables["TF_ADDITIONAL_JAVA_ARGS"] = $"-Djavax.net.ssl.keyStore={jksFile} -Djavax.net.ssl.keyStorePassword={clientCertPassword}";
                 }
-            };
-
-            processInvoker.ExecuteAsync(ExecutionContext.Variables.GetValueOrDefault("system.defaultworkingdirectory")?.Value, toolPath, argLine, null, true, CancellationToken.None).GetAwaiter().GetResult();
-
-            if (!string.IsNullOrEmpty(clientCertPassword))
-            {
-                ExecutionContext.Debug($"Set TF_ADDITIONAL_JAVA_ARGS=-Djavax.net.ssl.keyStore={jksFile} -Djavax.net.ssl.keyStorePassword={clientCertPassword}");
-                AdditionalEnvironmentVariables["TF_ADDITIONAL_JAVA_ARGS"] = $"-Djavax.net.ssl.keyStore={jksFile} -Djavax.net.ssl.keyStorePassword={clientCertPassword}";
-            }
-            else
-            {
-                ExecutionContext.Debug($"Set TF_ADDITIONAL_JAVA_ARGS=-Djavax.net.ssl.keyStore={jksFile}");
-                AdditionalEnvironmentVariables["TF_ADDITIONAL_JAVA_ARGS"] = $"-Djavax.net.ssl.keyStore={jksFile}";
+                else
+                {
+                    ExecutionContext.Debug($"Set TF_ADDITIONAL_JAVA_ARGS=-Djavax.net.ssl.keyStore={jksFile}");
+                    AdditionalEnvironmentVariables["TF_ADDITIONAL_JAVA_ARGS"] = $"-Djavax.net.ssl.keyStore={jksFile}";
+                }
             }
         }
 

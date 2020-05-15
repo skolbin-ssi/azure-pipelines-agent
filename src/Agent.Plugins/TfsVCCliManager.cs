@@ -74,47 +74,80 @@ namespace Agent.Plugins.Repository
             return RunCommandAsync(formatFlags, false, args);
         }
 
-        protected async Task RunCommandAsync(FormatFlags formatFlags, bool quiet, params string[] args)
+        protected Task RunCommandAsync(FormatFlags formatFlags, bool quiet, params string[] args)
+        {
+            return RunCommandAsync(formatFlags, quiet, 0, args);
+        }
+
+        protected async Task RunCommandAsync(FormatFlags formatFlags, bool quiet, int retriesOnFailure, params string[] args)
         {
             // Validation.
             ArgUtil.NotNull(args, nameof(args));
             ArgUtil.NotNull(ExecutionContext, nameof(ExecutionContext));
 
             // Invoke tf.
-            var processInvoker = new ProcessInvoker(ExecutionContext);
-            var outputLock = new object();
-            processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
+            using (var processInvoker = new ProcessInvoker(ExecutionContext))
             {
-                lock (outputLock)
+                var outputLock = new object();
+                processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
                 {
-                    if (quiet)
+                    lock (outputLock)
                     {
-                        ExecutionContext.Debug(e.Data);
+                        if (quiet)
+                        {
+                            ExecutionContext.Debug(e.Data);
+                        }
+                        else
+                        {
+                            ExecutionContext.Output(e.Data);
+                        }
                     }
-                    else
+                };
+                processInvoker.ErrorDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
+                {
+                    lock (outputLock)
                     {
                         ExecutionContext.Output(e.Data);
                     }
-                }
-            };
-            processInvoker.ErrorDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
-            {
-                lock (outputLock)
-                {
-                    ExecutionContext.Output(e.Data);
-                }
-            };
-            string arguments = FormatArguments(formatFlags, args);
-            ExecutionContext.Command($@"tf {arguments}");
-            await processInvoker.ExecuteAsync(
-                workingDirectory: SourcesDirectory,
-                fileName: "tf",
-                arguments: arguments,
-                environment: AdditionalEnvironmentVariables,
-                requireExitCodeZero: true,
-                outputEncoding: OutputEncoding,
-                cancellationToken: CancellationToken);
+                };
+                string arguments = FormatArguments(formatFlags, args);
+                ExecutionContext.Command($@"tf {arguments}");
 
+                for (int attempt = 0; attempt < retriesOnFailure; attempt++)
+                {
+                    int exitCode = await processInvoker.ExecuteAsync(
+                        workingDirectory: SourcesDirectory,
+                        fileName: "tf",
+                        arguments: arguments,
+                        environment: AdditionalEnvironmentVariables,
+                        requireExitCodeZero: false,
+                        outputEncoding: OutputEncoding,
+                        cancellationToken: CancellationToken);
+
+                    if (exitCode == 0)
+                    {
+                        return;
+                    }
+
+                    int sleep = Math.Min(200 * (int)Math.Pow(5, attempt), 30000);
+                    ExecutionContext.Output($"Sleeping for {sleep} ms");
+                    Thread.Sleep(sleep);
+
+                    // Use attempt+2 since we're using 0 based indexing and we're displaying this for the next attempt.
+                    ExecutionContext.Output($@"Retrying. Attempt ${attempt+2}/${retriesOnFailure}");
+
+                }
+
+                // Perform one last try and fail on non-zero exit code
+                await processInvoker.ExecuteAsync(
+                    workingDirectory: SourcesDirectory,
+                    fileName: "tf",
+                    arguments: arguments,
+                    environment: AdditionalEnvironmentVariables,
+                    requireExitCodeZero: true,
+                    outputEncoding: OutputEncoding,
+                    cancellationToken: CancellationToken);
+            }
         }
 
         protected Task<string> RunPorcelainCommandAsync(params string[] args)
@@ -146,46 +179,47 @@ namespace Agent.Plugins.Repository
             ArgUtil.NotNull(ExecutionContext, nameof(ExecutionContext));
 
             // Invoke tf.
-            var processInvoker = new ProcessInvoker(ExecutionContext);
-            var result = new TfsVCPorcelainCommandResult();
-            var outputLock = new object();
-            processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
+            using (var processInvoker = new ProcessInvoker(ExecutionContext))
             {
-                lock (outputLock)
+                var result = new TfsVCPorcelainCommandResult();
+                var outputLock = new object();
+                processInvoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
                 {
-                    ExecutionContext.Debug(e.Data);
-                    result.Output.Add(e.Data);
-                }
-            };
-            processInvoker.ErrorDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
-            {
-                lock (outputLock)
+                    lock (outputLock)
+                    {
+                        ExecutionContext.Debug(e.Data);
+                        result.Output.Add(e.Data);
+                    }
+                };
+                processInvoker.ErrorDataReceived += (object sender, ProcessDataReceivedEventArgs e) =>
                 {
-                    ExecutionContext.Debug(e.Data);
-                    result.Output.Add(e.Data);
+                    lock (outputLock)
+                    {
+                        ExecutionContext.Debug(e.Data);
+                        result.Output.Add(e.Data);
+                    }
+                };
+                string arguments = FormatArguments(formatFlags, args);
+                ExecutionContext.Debug($@"tf {arguments}");
+                // TODO: Test whether the output encoding needs to be specified on a non-Latin OS.
+                try
+                {
+                    await processInvoker.ExecuteAsync(
+                        workingDirectory: SourcesDirectory,
+                        fileName: "tf",
+                        arguments: arguments,
+                        environment: AdditionalEnvironmentVariables,
+                        requireExitCodeZero: true,
+                        outputEncoding: OutputEncoding,
+                        cancellationToken: CancellationToken);
                 }
-            };
-            string arguments = FormatArguments(formatFlags, args);
-            ExecutionContext.Debug($@"tf {arguments}");
-            // TODO: Test whether the output encoding needs to be specified on a non-Latin OS.
-            try
-            {
-                await processInvoker.ExecuteAsync(
-                    workingDirectory: SourcesDirectory,
-                    fileName: "tf",
-                    arguments: arguments,
-                    environment: AdditionalEnvironmentVariables,
-                    requireExitCodeZero: true,
-                    outputEncoding: OutputEncoding,
-                    cancellationToken: CancellationToken);
-            }
-            catch (ProcessExitCodeException ex)
-            {
-                result.Exception = ex;
-            }
+                catch (ProcessExitCodeException ex)
+                {
+                    result.Exception = ex;
+                }
 
-            return result;
-
+                return result;
+            }
         }
 
         private string FormatArguments(FormatFlags formatFlags, params string[] args)
