@@ -69,6 +69,11 @@ namespace Agent.Plugins.Repository
             return RunCommandAsync(FormatFlags.None, args);
         }
 
+        protected Task RunCommandAsync(int retriesOnFailure, params string[] args)
+        {
+            return RunCommandAsync(FormatFlags.None, false, retriesOnFailure, args);
+        }
+
         protected Task RunCommandAsync(FormatFlags formatFlags, params string[] args)
         {
             return RunCommandAsync(formatFlags, false, args);
@@ -80,6 +85,29 @@ namespace Agent.Plugins.Repository
         }
 
         protected async Task RunCommandAsync(FormatFlags formatFlags, bool quiet, int retriesOnFailure, params string[] args)
+        {
+            for (int attempt = 0; attempt < retriesOnFailure; attempt++)
+            {
+                int exitCode = await RunCommandAsync(formatFlags, quiet, false, args);
+
+                if (exitCode == 0)
+                {
+                    return;
+                }
+
+                int sleep = Math.Min(200 * (int)Math.Pow(5, attempt), 30000);
+                ExecutionContext.Output($"Sleeping for {sleep} ms");
+                await Task.Delay(sleep);
+
+                // Use attempt+2 since we're using 0 based indexing and we're displaying this for the next attempt.
+                ExecutionContext.Output($@"Retrying. Attempt ${attempt+2}/${retriesOnFailure}");
+            }
+
+            // Perform one last try and fail on non-zero exit code
+            await RunCommandAsync(formatFlags, quiet, true, args);
+        }
+
+        protected async Task<int> RunCommandAsync(FormatFlags formatFlags, bool quiet, bool failOnNonZeroExitCode, params string[] args)
         {
             // Validation.
             ArgUtil.NotNull(args, nameof(args));
@@ -113,41 +141,20 @@ namespace Agent.Plugins.Repository
                 string arguments = FormatArguments(formatFlags, args);
                 ExecutionContext.Command($@"tf {arguments}");
 
-                for (int attempt = 0; attempt < retriesOnFailure; attempt++)
-                {
-                    int exitCode = await processInvoker.ExecuteAsync(
-                        workingDirectory: SourcesDirectory,
-                        fileName: "tf",
-                        arguments: arguments,
-                        environment: AdditionalEnvironmentVariables,
-                        requireExitCodeZero: false,
-                        outputEncoding: OutputEncoding,
-                        cancellationToken: CancellationToken);
-
-                    if (exitCode == 0)
-                    {
-                        return;
-                    }
-
-                    int sleep = Math.Min(200 * (int)Math.Pow(5, attempt), 30000);
-                    ExecutionContext.Output($"Sleeping for {sleep} ms");
-                    await Task.Delay(sleep);
-
-                    // Use attempt+2 since we're using 0 based indexing and we're displaying this for the next attempt.
-                    ExecutionContext.Output($@"Retrying. Attempt ${attempt+2}/${retriesOnFailure}");
-
-                }
-
-                // Perform one last try and fail on non-zero exit code
-                await processInvoker.ExecuteAsync(
+                return await processInvoker.ExecuteAsync(
                     workingDirectory: SourcesDirectory,
                     fileName: "tf",
                     arguments: arguments,
                     environment: AdditionalEnvironmentVariables,
-                    requireExitCodeZero: true,
+                    requireExitCodeZero: failOnNonZeroExitCode,
                     outputEncoding: OutputEncoding,
                     cancellationToken: CancellationToken);
             }
+        }
+
+        protected Task<string> RunPorcelainCommandAsync(FormatFlags formatFlags, params string[] args)
+        {
+            return RunPorcelainCommandAsync(formatFlags, 0, args);
         }
 
         protected Task<string> RunPorcelainCommandAsync(params string[] args)
@@ -158,11 +165,6 @@ namespace Agent.Plugins.Repository
         protected Task<string> RunPorcelainCommandAsync(int retriesOnFailure, params string[] args)
         {
             return RunPorcelainCommandAsync(FormatFlags.None, retriesOnFailure, args);
-        }
-
-        protected Task<string> RunPorcelainCommandAsync(FormatFlags formatFlags, params string[] args)
-        {
-            return RunPorcelainCommandAsync(formatFlags, 0, args);
         }
 
         protected async Task<string> RunPorcelainCommandAsync(FormatFlags formatFlags, int retriesOnFailure, params string[] args)
@@ -182,13 +184,21 @@ namespace Agent.Plugins.Repository
             return string.Join(Environment.NewLine, result.Output ?? new List<string>());
         }
 
-        protected async Task<TfsVCPorcelainCommandResult> TryRunPorcelainCommandAsync(FormatFlags formatFlags, params string[] args)
+        protected async Task<TfsVCPorcelainCommandResult> TryRunPorcelainCommandAsync(FormatFlags formatFlags, int retriesOnFailure, params string[] args)
         {
-            var result = await TryRunPorcelainCommandAsync(formatFlags, 0, args);
+            var result = await TryRunPorcelainCommandAsync(formatFlags, args);
+            for (int attempt = 0; attempt < retriesOnFailure && result.Exception != null && result.Exception?.ExitCode != 1; attempt++)
+            {
+                ExecutionContext.Warning($"{result.Exception.Message}");
+                int sleep = Math.Min(200 * (int)Math.Pow(5, attempt), 30000);
+                ExecutionContext.Output($"Sleeping for {sleep} ms before starting {attempt + 1}/{retriesOnFailure} retry");
+                await Task.Delay(sleep);
+                result = await TryRunPorcelainCommandAsync(formatFlags, args);
+            }
             return result;
         }
 
-        protected async Task<TfsVCPorcelainCommandResult> TryRunPorcelainCommandAsync(FormatFlags formatFlags, int retriesOnFailure, params string[] args)
+        protected async Task<TfsVCPorcelainCommandResult> TryRunPorcelainCommandAsync(FormatFlags formatFlags, params string[] args)
         {
             // Validation.
             ArgUtil.NotNull(args, nameof(args));
@@ -220,32 +230,6 @@ namespace Agent.Plugins.Repository
                 // TODO: Test whether the output encoding needs to be specified on a non-Latin OS.
                 try
                 {
-                    for (int attempt = 0; attempt < retriesOnFailure; attempt++)
-                    {
-                        int exitCode = await processInvoker.ExecuteAsync(
-                            workingDirectory: SourcesDirectory,
-                            fileName: "tf",
-                            arguments: arguments,
-                            environment: AdditionalEnvironmentVariables,
-                            requireExitCodeZero: false,
-                            outputEncoding: OutputEncoding,
-                            cancellationToken: CancellationToken);
-
-                        if (exitCode == 0)
-                        {
-                            return result;
-                        }
-
-                        int sleep = Math.Min(200 * (int)Math.Pow(5, attempt), 30000);
-                        ExecutionContext.Output($"Sleeping for {sleep} ms");
-                        Thread.Sleep(sleep);
-
-                        // Use attempt+2 since we're using 0 based indexing and we're displaying this for the next attempt.
-                        ExecutionContext.Output($@"Retrying. Attempt ${attempt + 2}/${retriesOnFailure}");
-
-                    }
-
-                    // Perform one last try and fail on non-zero exit code
                     await processInvoker.ExecuteAsync(
                         workingDirectory: SourcesDirectory,
                         fileName: "tf",

@@ -423,6 +423,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener.Configuration
 
             agentSettings.DisableLogUploads = command.GetDisableLogUploads();
 
+            agentSettings.AlwaysExtractTask = command.GetAlwaysExtractTask();
+            
             _store.SaveSettings(agentSettings);
 
             if (saveProxySetting)
@@ -694,6 +696,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener.Configuration
                     PublicKey = new TaskAgentPublicKey(publicKey.Exponent, publicKey.Modulus),
                 },
                 MaxParallelism = 1,
+                ProvisioningState = TaskAgentProvisioningStateConstants.Provisioned,
                 Version = BuildConstants.AgentPackage.Version,
                 OSDescription = RuntimeInformation.OSDescription,
             };
