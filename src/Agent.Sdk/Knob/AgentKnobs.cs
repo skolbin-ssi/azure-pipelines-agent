@@ -19,6 +19,20 @@ namespace Agent.Sdk.Knob
             new RuntimeKnobSource("VSTS_SETUP_DOCKERGROUP"),
             new EnvironmentKnobSource("VSTS_SETUP_DOCKERGROUP"),
             new BuiltInDefaultKnobSource("true"));
+        
+        public static readonly Knob AllowMountTasksReadonlyOnWindows = new Knob(
+            nameof(AllowMountTasksReadonlyOnWindows),
+            "If true, allows the user to mount 'tasks' volume read-only on Windows OS",
+            new RuntimeKnobSource("VSTS_SETUP_ALLOW_MOUNT_TASKS_READONLY"),
+            new EnvironmentKnobSource("VSTS_SETUP_ALLOW_MOUNT_TASKS_READONLY"),
+            new BuiltInDefaultKnobSource("true"));
+
+        public static readonly Knob SkipPostExeceutionIfTargetContainerStopped = new Knob(
+            nameof(SkipPostExeceutionIfTargetContainerStopped),
+            "If true, skips post-execution step for tasks in case the target container has been stopped",
+            new RuntimeKnobSource("AGENT_SKIP_POST_EXECUTION_IF_CONTAINER_STOPPED"),
+            new EnvironmentKnobSource("AGENT_SKIP_POST_EXECUTION_IF_CONTAINER_STOPPED"),
+            new BuiltInDefaultKnobSource("false"));
 
         // Directory structure
         public static readonly Knob AgentToolsDirectory = new Knob(
@@ -74,13 +88,6 @@ namespace Agent.Sdk.Knob
             new EnvironmentKnobSource("AGENT_USE_NODE10"),
             new BuiltInDefaultKnobSource("false"));
 
-        public static readonly Knob UseNode14 = new Knob(
-            nameof(UseNode14),
-            "Forces the agent to use Node 14 handler for all Node-based tasks",
-            new RuntimeKnobSource("AGENT_USE_NODE14"),
-            new EnvironmentKnobSource("AGENT_USE_NODE14"),
-            new BuiltInDefaultKnobSource("false"));
-
         // Agent logging
         public static readonly Knob AgentPerflog = new Knob(
             nameof(AgentPerflog),
@@ -105,7 +112,7 @@ namespace Agent.Sdk.Knob
             nameof(AgentDownloadTimeout),
             "Amount of time in seconds to wait for the agent to download a new version when updating",
             new EnvironmentKnobSource("AZP_AGENT_DOWNLOAD_TIMEOUT"),
-            new BuiltInDefaultKnobSource("900")); // 15*60
+            new BuiltInDefaultKnobSource("1500")); // 25*60
 
         public static readonly Knob TaskDownloadTimeout = new Knob(
             nameof(TaskDownloadTimeout),
@@ -178,6 +185,19 @@ namespace Agent.Sdk.Knob
             new EnvironmentKnobSource("AZP_USE_CREDSCAN_REGEXES"),
             new BuiltInDefaultKnobSource("false"));
 
+        // Task restrictions
+        public static readonly Knob TaskRestrictionsEnforcementMode = new Knob(
+            nameof(TaskRestrictionsEnforcementMode),
+            "The enforcement mode for command or variable restrictions defined in tasks. Values are Enabled, WarningOnly, Disabled.",
+            new RuntimeKnobSource("agent.taskRestrictionsEnforcementMode"),
+            new BuiltInDefaultKnobSource("WarningOnly"));
+
+        public static readonly Knob EnableTaskRestrictionsTelemetry = new Knob(
+            nameof(EnableTaskRestrictionsTelemetry),
+            "Enable capturing telemetry on the enforcement of command or variable restrictions defined in tasks.",
+            new RuntimeKnobSource("agent.enableTaskRestrictionsTelemetry"),
+            new BuiltInDefaultKnobSource("false"));
+
         // Misc
         public static readonly Knob DisableAgentDowngrade = new Knob(
             nameof(DisableAgentDowngrade),
@@ -195,6 +215,20 @@ namespace Agent.Sdk.Knob
             nameof(DisableInputTrimming),
             "By default, the agent trims whitespace and new line characters from all task inputs. Setting this to true disables this behavior.",
             new EnvironmentKnobSource("DISABLE_INPUT_TRIMMING"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob DecodePercents = new Knob(
+            nameof(DecodePercents),
+            "By default, the agent does not decodes %AZP25 as % which may be needed to allow users to work around reserved values. Setting this to true enables this behavior.",
+            new RuntimeKnobSource("DECODE_PERCENTS"),
+            new EnvironmentKnobSource("DECODE_PERCENTS"),
+            new BuiltInDefaultKnobSource("true"));
+
+        public static readonly Knob AllowTfvcUnshelveErrors = new Knob(
+            nameof(AllowTfvcUnshelveErrors),
+            "By default, the TFVC unshelve command does not throw errors e.g. when there's no mapping for one or more files shelved. Setting this to true enables this behavior.",
+            new RuntimeKnobSource("ALLOW_TFVC_UNSHELVE_ERRORS"),
+            new EnvironmentKnobSource("ALLOW_TFVC_UNSHELVE_ERRORS"),
             new BuiltInDefaultKnobSource("false"));
     }
 

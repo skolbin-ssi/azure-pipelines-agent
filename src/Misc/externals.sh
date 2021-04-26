@@ -4,12 +4,13 @@ PRECACHE=$2
 LAYOUT_DIR=$3
 L1_MODE=$4
 
+INCLUDE_NODE6=${INCLUDE_NODE6:-true}
+
 CONTAINER_URL=https://vstsagenttools.blob.core.windows.net/tools
 NODE_URL=https://nodejs.org/dist
 NODE_VERSION="6.17.1"
-NODE10_VERSION="10.21.0"
-NODE14_VERSION="14.11.0"
-MINGIT_VERSION="2.28.0"
+NODE10_VERSION="10.24.1"
+MINGIT_VERSION="2.30.2"
 
 get_abs_path() {
   # exploits the fact that pwd will print abs path when no args
@@ -148,13 +149,13 @@ if [[ "$PACKAGERUNTIME" == "win-x64" ]]; then
     acquireExternalTool "$CONTAINER_URL/vstsom/m122_887c6659/vstsom.zip" vstsom
     acquireExternalTool "$CONTAINER_URL/vstsom/m153_d91bed0b/vstsom.zip" tf
     acquireExternalTool "$CONTAINER_URL/vswhere/2_8_4/vswhere.zip" vswhere
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x64/node.exe" node/bin
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x64/node.lib" node/bin
+    if [[ "$INCLUDE_NODE6" == "true" ]]; then
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x64/node.exe" node/bin
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x64/node.lib" node/bin
+    fi
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x64/node.exe" node10/bin
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x64/node.lib" node10/bin
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/win-x64/node.exe" node14/bin
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/win-x64/node.lib" node14/bin
-    acquireExternalTool "https://dist.nuget.org/win-x86-commandline/v3.3.0/nuget.exe" nuget
+    acquireExternalTool "https://dist.nuget.org/win-x86-commandline/v3.4.4/nuget.exe" nuget
 fi
 
 if [[ "$PACKAGERUNTIME" == "win-x86" ]]; then
@@ -163,50 +164,56 @@ if [[ "$PACKAGERUNTIME" == "win-x86" ]]; then
     acquireExternalTool "$CONTAINER_URL/symstore/1/symstore.zip" symstore
     acquireExternalTool "$CONTAINER_URL/vstsom/m153_d91bed0b/vstsom.zip" tf
     acquireExternalTool "$CONTAINER_URL/vswhere/2_8_4/vswhere.zip" vswhere
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x86/node.exe" node/bin
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x86/node.lib" node/bin
+    if [[ "$INCLUDE_NODE6" == "true" ]]; then
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x86/node.exe" node/bin
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x86/node.lib" node/bin
+    fi
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x86/node.exe" node10/bin
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x86/node.lib" node10/bin
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/win-x86/node.exe" node14/bin
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/win-x86/node.lib" node14/bin
-    acquireExternalTool "https://dist.nuget.org/win-x86-commandline/v3.3.0/nuget.exe" nuget
+    acquireExternalTool "https://dist.nuget.org/win-x86-commandline/v3.4.4/nuget.exe" nuget
 fi
 
 # Download the external tools only for OSX.
 if [[ "$PACKAGERUNTIME" == "osx-x64" ]]; then
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-x64.tar.gz" node fix_nested_dir
+    if [[ "$INCLUDE_NODE6" == "true" ]]; then
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-x64.tar.gz" node fix_nested_dir
+    fi
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-darwin-x64.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/node-v${NODE14_VERSION}-darwin-x64.tar.gz" node14 fix_nested_dir
 fi
 
 # Download the external tools common across OSX and Linux PACKAGERUNTIMEs.
 if [[ "$PACKAGERUNTIME" == "linux-x64" || "$PACKAGERUNTIME" == "linux-arm" || "$PACKAGERUNTIME" == "linux-arm64" || "$PACKAGERUNTIME" == "osx-x64" || "$PACKAGERUNTIME" == "rhel.6-x64" ]]; then
-    acquireExternalTool "$CONTAINER_URL/tee/14_134_0/TEE-CLC-14.134.0.zip" tee fix_nested_dir
+    acquireExternalTool "$CONTAINER_URL/tee/14_135_0/TEE-CLC-14.135.0.zip" tee fix_nested_dir
     acquireExternalTool "$CONTAINER_URL/vso-task-lib/0.5.5/vso-task-lib.tar.gz" vso-task-lib
 fi
 
 # Download the external tools common across Linux PACKAGERUNTIMEs (excluding OSX).
 if [[ "$PACKAGERUNTIME" == "linux-x64" || "$PACKAGERUNTIME" == "rhel.6-x64" ]]; then
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" node fix_nested_dir
+    if [[ "$INCLUDE_NODE6" == "true" ]]; then
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" node fix_nested_dir
+    fi
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-linux-x64.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/node-v${NODE14_VERSION}-linux-x64.tar.gz" node14 fix_nested_dir
 fi
 
 if [[ "$PACKAGERUNTIME" == "linux-arm" ]]; then
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-armv7l.tar.gz" node fix_nested_dir
+    if [[ "$INCLUDE_NODE6" == "true" ]]; then
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-armv7l.tar.gz" node fix_nested_dir
+    fi
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-linux-armv7l.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/node-v${NODE14_VERSION}-linux-armv7l.tar.gz" node14 fix_nested_dir
 fi
 
 if [[ "$PACKAGERUNTIME" == "linux-arm64" ]]; then
-    acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.gz" node fix_nested_dir
+    if [[ "$INCLUDE_NODE6" == "true" ]]; then
+        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.gz" node fix_nested_dir
+    fi
     acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-linux-arm64.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE14_VERSION}/node-v${NODE14_VERSION}-linux-arm64.tar.gz" node14 fix_nested_dir
 fi
 
 if [[ "$L1_MODE" != "" || "$PRECACHE" != "" ]]; then
     # cmdline task
     acquireExternalTool "$CONTAINER_URL/l1Tasks/d9bafed4-0b18-4f58-968d-86655b4d2ce9.zip" "Tasks" false dont_uncompress
+    # cmdline node10 task
+    acquireExternalTool "$CONTAINER_URL/l1Tasks/e9bafed4-0b18-4f58-968d-86655b4d2ce9.zip" "Tasks" false dont_uncompress
 
     # with the current setup of this package there are backslashes so it fails to extract on non-windows at runtime
     # we may need to fix this in the Agent
