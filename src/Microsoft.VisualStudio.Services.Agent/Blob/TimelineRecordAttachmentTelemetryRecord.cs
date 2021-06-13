@@ -12,15 +12,18 @@ namespace Microsoft.VisualStudio.Services.Agent.Blob
     /// <summary>
     /// Generic telemetry record for use with timeline record events.
     /// </summary>
-    public class TimelineRecordAttachmentTelemetryRecord : BlobStoreTelemetryRecord
+    public class TimelineRecordAttachmentTelemetryRecord : PipelineTelemetryRecord
     {
         public TimelineRecordAttachmentTelemetryRecord(
             TelemetryInformationLevel level, 
             Uri baseAddress, 
             string eventNamePrefix, 
             string eventNameSuffix,
+            Guid planId,
+            Guid jobId,
+            Guid taskInstanceId,
             uint attemptNumber = 1)
-            : base(level, baseAddress, eventNamePrefix, eventNameSuffix, attemptNumber)
+            : base(level, baseAddress, eventNamePrefix, eventNameSuffix, planId, jobId, taskInstanceId, attemptNumber)
         {
         }
     }

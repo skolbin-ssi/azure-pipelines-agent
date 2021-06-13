@@ -7,11 +7,13 @@ using System.Threading.Tasks;
 using System.Collections.Generic;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
 using System;
-using Microsoft.VisualStudio.Services.WebApi;
 using System.Linq;
+using Microsoft.VisualStudio.Services.Agent.Blob;
+using Microsoft.VisualStudio.Services.WebApi;
 using Microsoft.VisualStudio.Services.Common;
 using Microsoft.VisualStudio.Services.BlobStore.Common;
 using Microsoft.VisualStudio.Services.Content.Common;
+using Microsoft.VisualStudio.Services.Content.Common.Telemetry;
 using BuildXL.Cache.ContentStore.Hashing;
 using BlobIdentifierWithBlocks = Microsoft.VisualStudio.Services.BlobStore.Common.BlobIdentifierWithBlocks;
 using VsoHash = Microsoft.VisualStudio.Services.BlobStore.Common.VsoHash;
@@ -134,7 +136,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests.L1.Worker
             return Task.FromResult(blockBlobId);
         }
 
-        public async Task<(DedupIdentifier dedupId, ulong length)> UploadAttachmentToBlobStore(bool verbose, string itemPath, CancellationToken cancellationToken)
+        public async Task<(DedupIdentifier dedupId, ulong length)> UploadAttachmentToBlobStore(bool verbose, string itemPath, Guid planId, Guid jobId, CancellationToken cancellationToken)
         {
             UploadedAttachmentBlobFiles.Add(itemPath);
             var chunk = await ChunkerHelper.CreateFromFileAsync(FileSystem.Instance, itemPath, cancellationToken, false);

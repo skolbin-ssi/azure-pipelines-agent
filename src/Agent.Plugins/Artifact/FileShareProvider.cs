@@ -11,7 +11,6 @@ using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 using Agent.Plugins.PipelineArtifact.Telemetry;
 using Agent.Sdk;
-using Agent.Sdk.Blob;
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.VisualStudio.Services.Agent.Blob;
 using Microsoft.VisualStudio.Services.Agent.Util;
