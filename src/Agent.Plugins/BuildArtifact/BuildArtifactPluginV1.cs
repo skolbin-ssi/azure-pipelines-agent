@@ -16,6 +16,7 @@ using Microsoft.VisualStudio.Services.Common;
 using Microsoft.VisualStudio.Services.WebApi;
 using Microsoft.VisualStudio.Services.Agent.Util;
 using Microsoft.VisualStudio.Services.Content.Common.Tracing;
+using Minimatch;
 
 namespace Agent.Plugins.BuildArtifacts
 {
@@ -53,6 +54,7 @@ namespace Agent.Plugins.BuildArtifacts
             public static readonly string ItemPattern = "itemPattern";
             public static readonly string DownloadType = "downloadType";
             public static readonly string DownloadPath = "downloadPath";
+            public static readonly string CleanDestinationFolder = "cleanDestinationFolder";
             public static readonly string BuildId = "buildId";
             public static readonly string RetryDownloadCount = "retryDownloadCount";
             public static readonly string ParallelizationLimit = "parallelizationLimit";
@@ -70,6 +72,11 @@ namespace Agent.Plugins.BuildArtifacts
         static readonly string buildVersionToDownloadLatest = "latest";
         static readonly string buildVersionToDownloadSpecific = "specific";
         static readonly string buildVersionToDownloadLatestFromBranch = "latestFromBranch";
+        static readonly Options minimatchOptions = new Options() {
+           Dot = true,
+           NoBrace = true,
+           AllowWindowsPaths = PlatformUtil.RunningOnWindows
+        };
 
         protected override async Task ProcessCommandInternalAsync(
             AgentTaskPluginExecutionContext context,
@@ -83,6 +90,7 @@ namespace Agent.Plugins.BuildArtifacts
             string specificBuildWithTriggering = context.GetInput(TaskProperties.SpecificBuildWithTriggering, required: false);
             string buildVersionToDownload = context.GetInput(TaskProperties.BuildVersionToDownload, required: false);
             string targetPath = context.GetInput(TaskProperties.DownloadPath, required: true);
+            string cleanDestinationFolder = context.GetInput(TaskProperties.CleanDestinationFolder, required: false);
             string environmentBuildId = context.Variables.GetValueOrDefault(BuildVariables.BuildId)?.Value ?? string.Empty; // BuildID provided by environment.
             string itemPattern = context.GetInput(TaskProperties.ItemPattern, required: false);
             string projectName = context.GetInput(TaskProperties.Project, required: false);
@@ -122,6 +130,12 @@ namespace Agent.Plugins.BuildArtifacts
             {
                 allowCanceledBuildsBool = false;
             }
+
+            if (!bool.TryParse(cleanDestinationFolder, out var cleanDestinationFolderBool))
+            {
+                cleanDestinationFolderBool = false;
+            }
+
             var resultFilter = GetResultFilter(allowPartiallySucceededBuildsBool, allowFailedBuildsBool, allowCanceledBuildsBool);
 
             PipelineArtifactServer server = new PipelineArtifactServer(tracer);
@@ -135,7 +149,7 @@ namespace Agent.Plugins.BuildArtifacts
                 {
                     throw new ArgumentNullException(StringUtil.Loc("CannotBeNullOrEmpty"), "Project ID");
                 }
-                
+
                 Guid projectId = Guid.Parse(projectIdStr);
                 ArgUtil.NotEmpty(projectId, nameof(projectId));
 
@@ -174,7 +188,8 @@ namespace Agent.Plugins.BuildArtifacts
                     MinimatchFilterWithArtifactName = true,
                     ParallelizationLimit = int.TryParse(parallelizationLimit, out var parallelLimit) ? parallelLimit : 8,
                     RetryDownloadCount = int.TryParse(retryDownloadCount, out var retryCount) ? retryCount : 4,
-                    CheckDownloadedFiles = bool.TryParse(checkDownloadedFiles, out var checkDownloads) && checkDownloads
+                    CheckDownloadedFiles = bool.TryParse(checkDownloadedFiles, out var checkDownloads) && checkDownloads,
+                    CustomMinimatchOptions = minimatchOptions
                 };
             }
             else if (buildType == buildTypeSpecific)
@@ -268,7 +283,8 @@ namespace Agent.Plugins.BuildArtifacts
                     MinimatchFilterWithArtifactName = true,
                     ParallelizationLimit = int.TryParse(parallelizationLimit, out var parallelLimit) ? parallelLimit : 8,
                     RetryDownloadCount = int.TryParse(retryDownloadCount, out var retryCount) ? retryCount : 4,
-                    CheckDownloadedFiles = bool.TryParse(checkDownloadedFiles, out var checkDownloads) && checkDownloads
+                    CheckDownloadedFiles = bool.TryParse(checkDownloadedFiles, out var checkDownloads) && checkDownloads,
+                    CustomMinimatchOptions = minimatchOptions
                 };
             }
             else
@@ -277,7 +293,10 @@ namespace Agent.Plugins.BuildArtifacts
             }
 
             string fullPath = this.CreateDirectoryIfDoesntExist(targetPath);
-
+            if (cleanDestinationFolderBool)
+            {
+                CleanDirectory(context, fullPath);
+            }
             var downloadOption = downloadType == "single" ? DownloadOptions.SingleDownload : DownloadOptions.MultiDownload;
 
             // Build artifacts always includes the artifact in the path name
@@ -297,6 +316,49 @@ namespace Agent.Plugins.BuildArtifacts
                 Directory.CreateDirectory(fullPath);
             }
             return fullPath;
+        }
+
+        private void CleanDirectory(AgentTaskPluginExecutionContext context, string directoryPath)
+        {
+            FileAttributes dirAttributes;
+            context.Output(StringUtil.Loc("CleaningDestinationFolder", directoryPath));
+            
+            try
+            {
+                dirAttributes = File.GetAttributes(directoryPath);
+            }
+            catch (Exception ex) when (ex is FileNotFoundException || ex is DirectoryNotFoundException)
+            {
+                context.Warning(StringUtil.Loc("NoFolderToClean", directoryPath));
+                return;
+            }
+
+            if (dirAttributes.HasFlag(FileAttributes.Directory))
+            {
+                bool isDirectoryEmpty = !Directory.EnumerateFileSystemEntries(directoryPath).Any();
+                if (isDirectoryEmpty)
+                {
+                    context.Warning(StringUtil.Loc("NoFolderToClean", directoryPath));
+                    return;
+                }
+
+                // delete the child items
+                DirectoryInfo directoryInfo = new DirectoryInfo(directoryPath);
+                foreach (FileInfo file in directoryInfo.GetFiles())
+                {
+                    file.Delete();
+                }
+
+                foreach (DirectoryInfo subDirectory in directoryInfo.GetDirectories())
+                {
+                    subDirectory.Delete(true);
+                }
+            }
+            else
+            {
+                // specified folder is not a directory. Delete it.
+                File.Delete(directoryPath);
+            }
         }
 
         private async Task<int> GetPipelineIdAsync(AgentTaskPluginExecutionContext context, string pipelineDefinition, string buildVersionToDownload, string project, string[] tagFilters, BuildResult resultFilter = BuildResult.Succeeded, string branchName = null, CancellationToken cancellationToken = default(CancellationToken))
