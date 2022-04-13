@@ -16,6 +16,7 @@ using System.Linq;
 using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
+using Agent.Sdk.Knob;
 using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
@@ -161,7 +162,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
 
             // Copy event logs for windows machines
-            if (PlatformUtil.RunningOnWindows)
+            bool dumpJobEventLogs = AgentKnobs.DumpJobEventLogs.GetValue(executionContext).AsBoolean();
+            if (dumpJobEventLogs && PlatformUtil.RunningOnWindows)
             {
                 executionContext.Debug("Dumping event viewer logs for current job.");
 
@@ -180,26 +182,32 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 }
             }
 
-            if (PlatformUtil.RunningOnLinux && !PlatformUtil.RunningOnRHEL6) {
+            bool dumpPackagesVerificationResult = AgentKnobs.DumpPackagesVerificationResult.GetValue(executionContext).AsBoolean();
+            if (dumpPackagesVerificationResult && PlatformUtil.RunningOnLinux && !PlatformUtil.RunningOnRHEL6) {
                 executionContext.Debug("Dumping info about invalid MD5 sums of installed packages.");
 
-                try
-                {
-                    string packageVerificationResults = await GetPackageVerificationResult();
-                    IEnumerable<string> brokenPackagesInfo = packageVerificationResults
-                        .Split("\n")
-                        .Where((line) => !String.IsNullOrEmpty(line) && !line.EndsWith("OK"));
+                var debsums = WhichUtil.Which("debsums");
+                if (debsums == null) {
+                    executionContext.Debug("Debsums is not installed on the system. Skipping broken packages check.");
+                } else {
+                    try
+                    {
+                        string packageVerificationResults = await GetPackageVerificationResult(debsums);
+                        IEnumerable<string> brokenPackagesInfo = packageVerificationResults
+                            .Split("\n")
+                            .Where((line) => !String.IsNullOrEmpty(line) && !line.EndsWith("OK"));
 
-                    string brokenPackagesLogsPath = $"{HostContext.GetDirectory(WellKnownDirectory.Diag)}/BrokenPackages-{ jobStartTimeUtc.ToString("yyyyMMdd-HHmmss") }.log";
-                    File.AppendAllLines(brokenPackagesLogsPath, brokenPackagesInfo);
+                        string brokenPackagesLogsPath = $"{HostContext.GetDirectory(WellKnownDirectory.Diag)}/BrokenPackages-{ jobStartTimeUtc.ToString("yyyyMMdd-HHmmss") }.log";
+                        File.AppendAllLines(brokenPackagesLogsPath, brokenPackagesInfo);
 
-                    string destination = Path.Combine(supportFilesFolder, Path.GetFileName(brokenPackagesLogsPath));
-                    File.Copy(brokenPackagesLogsPath, destination);
-                }
-                catch (Exception ex)
-                {
-                    executionContext.Debug("Failed to dump broken packages logs. Skipping.");
-                    executionContext.Debug($"Error message: {ex}");
+                        string destination = Path.Combine(supportFilesFolder, Path.GetFileName(brokenPackagesLogsPath));
+                        File.Copy(brokenPackagesLogsPath, destination);
+                    }
+                    catch (Exception ex)
+                    {
+                        executionContext.Debug("Failed to dump broken packages logs. Skipping.");
+                        executionContext.Debug($"Error message: {ex}");
+                    }
                 }
             } else {
                 executionContext.Debug("The platform is not based on Debian - skipping debsums check.");
@@ -698,9 +706,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         ///  Git package verification result using the "debsums" utility.
         /// </summary>
         /// <returns>String with the "debsums" output</returns>
-        private async Task<string> GetPackageVerificationResult()
+        private async Task<string> GetPackageVerificationResult(string debsumsPath)
         {
-            var debsums = WhichUtil.Which("debsums");
             var stringBuilder = new StringBuilder();
             using (var processInvoker = HostContext.CreateService<IProcessInvoker>())
             {
@@ -715,7 +722,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
                 await processInvoker.ExecuteAsync(
                     workingDirectory: HostContext.GetDirectory(WellKnownDirectory.Bin),
-                    fileName: debsums,
+                    fileName: debsumsPath,
                     arguments: string.Empty,
                     environment: null,
                     requireExitCodeZero: false,
