@@ -1,16 +1,22 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Agent.Sdk;
-using Microsoft.TeamFoundation.DistributedTask.WebApi;
-using Microsoft.VisualStudio.Services.Agent.Util;
 using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Agent.Sdk;
+using Agent.Sdk.Knob;
+
 using Microsoft.TeamFoundation.DistributedTask.Expressions;
+using Microsoft.TeamFoundation.DistributedTask.WebApi;
+using Microsoft.VisualStudio.Services.Agent.Util;
+
 using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
-using Microsoft.VisualStudio.Services.CircuitBreaker;
+
+using Newtonsoft.Json;
+using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -34,10 +40,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
     public sealed class StepsRunner : AgentService, IStepsRunner
     {
-        private IJobServerQueue _jobServerQueue;
-
-        private IJobServerQueue JobServerQueue => _jobServerQueue ??= HostContext.GetService<IJobServerQueue>();
-
         // StepsRunner should never throw exception to caller
         public async Task RunAsync(IExecutionContext jobContext, IList<IStep> steps)
         {
@@ -54,6 +56,21 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             CancellationTokenRegistration? jobCancelRegister = null;
             int stepIndex = 0;
             jobContext.Variables.Agent_JobStatus = jobContext.Result ?? TaskResult.Succeeded;
+            // Wait till all async commands finish.
+            foreach (var command in jobContext.AsyncCommands ?? new List<IAsyncCommandContext>())
+            {
+                try
+                {
+                    // wait async command to finish.
+                    await command.WaitAsync();
+                }
+
+                catch (Exception ex)
+                {
+                    // Log the error
+                    Trace.Info($"Caught exception from async command {command.Name}: {ex}");
+                }
+            }
             foreach (IStep step in steps)
             {
                 Trace.Info($"Processing step: DisplayName='{step.DisplayName}', ContinueOnError={step.ContinueOnError}, Enabled={step.Enabled}");
@@ -69,6 +86,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 {
                     HostContext.WritePerfCounter($"TaskStart_{taskStep.Task.Reference.Name}_{stepIndex}");
                 }
+
+                // Change the current job context to the step context.
+                var resourceDiagnosticManager = HostContext.GetService<IResourceMetricsManager>();
+                resourceDiagnosticManager.SetContext(step.ExecutionContext);
 
                 // Variable expansion.
                 step.ExecutionContext.SetStepTarget(step.Target);
@@ -94,6 +115,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                             ConditionResult conditionReTestResult;
                             if (HostContext.AgentShutdownToken.IsCancellationRequested)
                             {
+                                if (AgentKnobs.FailJobWhenAgentDies.GetValue(jobContext).AsBoolean())
+                                {
+                                    PublishTelemetry(jobContext, TaskResult.Failed.ToString(), "120");
+                                    jobContext.Result = TaskResult.Failed;
+                                    jobContext.Variables.Agent_JobStatus = jobContext.Result;
+                                }
                                 step.ExecutionContext.Debug($"Skip Re-evaluate condition on agent shutdown.");
                                 conditionReTestResult = false;
                             }
@@ -116,9 +143,21 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                             {
                                 // Cancel the step.
                                 Trace.Info("Cancel current running step.");
+                                step.ExecutionContext.Error(StringUtil.Loc("StepCancelled"));
                                 step.ExecutionContext.CancelToken();
                             }
                         });
+                    }
+                    else if (AgentKnobs.FailJobWhenAgentDies.GetValue(jobContext).AsBoolean() &&
+                            HostContext.AgentShutdownToken.IsCancellationRequested)
+                    {
+                        if (jobContext.Result != TaskResult.Failed)
+                        {
+                            // mark job as failed
+                            PublishTelemetry(jobContext, jobContext.Result.ToString(), "121");
+                            jobContext.Result = TaskResult.Failed;
+                            jobContext.Variables.Agent_JobStatus = jobContext.Result;
+                        }
                     }
                     else
                     {
@@ -158,8 +197,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     if (!conditionResult.Value && conditionEvaluateError == null)
                     {
                         // Condition == false
-                        Trace.Info("Skipping step due to condition evaluation.");
-                        step.ExecutionContext.Complete(TaskResult.Skipped, resultCode: conditionResult.Trace);
+                        string skipStepMessage = "Skipping step due to condition evaluation.";
+                        Trace.Info(skipStepMessage);
+                        step.ExecutionContext.Output($"{skipStepMessage}\n{conditionResult.Trace}");
+                        step.ExecutionContext.Complete(TaskResult.Skipped, resultCode: skipStepMessage);
                         continue;
                     }
 
@@ -231,6 +272,14 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     step.ExecutionContext.Error(StringUtil.Loc("StepTimedOut"));
                     step.ExecutionContext.Result = TaskResult.Failed;
                 }
+                else if (AgentKnobs.FailJobWhenAgentDies.GetValue(step.ExecutionContext).AsBoolean() &&
+                        HostContext.AgentShutdownToken.IsCancellationRequested)
+                {
+                    PublishTelemetry(step.ExecutionContext, TaskResult.Failed.ToString(), "122");
+                    Trace.Error($"Caught Agent Shutdown exception from step: {ex.Message}");
+                    step.ExecutionContext.Error(ex);
+                    step.ExecutionContext.Result = TaskResult.Failed;
+                }
                 else
                 {
                     // Log the exception and cancel the step.
@@ -263,6 +312,16 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         // Log the timeout error, set step result to falied if the current result is not canceled.
                         Trace.Error($"Caught timeout exception from async command {command.Name}: {ex}");
                         step.ExecutionContext.Error(StringUtil.Loc("StepTimedOut"));
+
+                        // if the step already canceled, don't set it to failed.
+                        step.ExecutionContext.CommandResult = TaskResultUtil.MergeTaskResults(step.ExecutionContext.CommandResult, TaskResult.Failed);
+                    }
+                    else if (AgentKnobs.FailJobWhenAgentDies.GetValue(step.ExecutionContext).AsBoolean() &&
+                            HostContext.AgentShutdownToken.IsCancellationRequested)
+                    {
+                        PublishTelemetry(step.ExecutionContext, TaskResult.Failed.ToString(), "123");
+                        Trace.Error($"Caught Agent shutdown exception from async command {command.Name}: {ex}");
+                        step.ExecutionContext.Error(ex);
 
                         // if the step already canceled, don't set it to failed.
                         step.ExecutionContext.CommandResult = TaskResultUtil.MergeTaskResults(step.ExecutionContext.CommandResult, TaskResult.Failed);
@@ -308,18 +367,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             // Complete the step context.
             step.ExecutionContext.Section(StringUtil.Loc("StepFinishing", step.DisplayName));
             step.ExecutionContext.Complete();
-
-            try
-            {
-                // We need to drain the queues after a task just in case if
-                // there are a lot of items since it can cause some UI hangs.
-                await JobServerQueue.DrainQueues();
-            }
-            catch (Exception ex)
-            {
-                Trace.Error($"Error has occurred while draining queues, it can cause some UI glitches but it doesn't affect a pipeline execution itself: {ex}");
-                step.ExecutionContext.Error(ex);
-            }
         }
 
         private async Task SwitchToUtf8Codepage(IStep step)
@@ -333,10 +380,21 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             {
                 if (step.ExecutionContext.Variables.Retain_Default_Encoding != true && Console.InputEncoding.CodePage != 65001)
                 {
-                    using (var p = HostContext.CreateService<IProcessInvoker>())
+                    using var pi = HostContext.CreateService<IProcessInvoker>();
+
+                    using var timeoutTokenSource = new CancellationTokenSource();
+                    // 1 minute should be enough to switch to UTF8 code page
+                    timeoutTokenSource.CancelAfter(TimeSpan.FromSeconds(60));
+
+                    // Join main and timeout cancellation tokens
+                    using var linkedTokenSource = CancellationTokenSource.CreateLinkedTokenSource(
+                        step.ExecutionContext.CancellationToken,
+                        timeoutTokenSource.Token);
+
+                    try
                     {
                         // Use UTF8 code page
-                        int exitCode = await p.ExecuteAsync(workingDirectory: HostContext.GetDirectory(WellKnownDirectory.Work),
+                        int exitCode = await pi.ExecuteAsync(workingDirectory: HostContext.GetDirectory(WellKnownDirectory.Work),
                                                 fileName: WhichUtil.Which("chcp", true, Trace),
                                                 arguments: "65001",
                                                 environment: null,
@@ -346,7 +404,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                                                 redirectStandardIn: null,
                                                 inheritConsoleHandler: true,
                                                 continueAfterCancelProcessTreeKillAttempt: ProcessInvoker.ContinueAfterCancelProcessTreeKillAttemptDefault,
-                                                cancellationToken: step.ExecutionContext.CancellationToken);
+                                                cancellationToken: linkedTokenSource.Token);
                         if (exitCode == 0)
                         {
                             Trace.Info("Successfully returned to code page 65001 (UTF8)");
@@ -356,11 +414,45 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                             Trace.Warning($"'chcp 65001' failed with exit code {exitCode}");
                         }
                     }
+                    catch (OperationCanceledException)
+                    {
+                        if (!timeoutTokenSource.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+
+                        Trace.Warning("'chcp 65001' cancelled by timeout");
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Trace.Warning($"'chcp 65001' failed with exception {ex.Message}");
+            }
+        }
+
+        private void PublishTelemetry(IExecutionContext context, string Task_Result, string TracePoint)
+        {
+            try
+            {
+                var telemetryData = new Dictionary<string, string>
+                {
+                    { "JobId", context.Variables.System_JobId.ToString()},
+                    { "JobResult", Task_Result },
+                    { "TracePoint", TracePoint},
+                };
+                var cmd = new Command("telemetry", "publish");
+                cmd.Data = JsonConvert.SerializeObject(telemetryData, Formatting.None);
+                cmd.Properties.Add("area", "PipelinesTasks");
+                cmd.Properties.Add("feature", "AgentShutdown");
+
+                var publishTelemetryCmd = new TelemetryCommandExtension();
+                publishTelemetryCmd.Initialize(HostContext);
+                publishTelemetryCmd.ProcessCommand(context, cmd);
+            }
+            catch (Exception ex)
+            {
+                Trace.Warning($"Unable to publish agent shutdown telemetry data. Exception: {ex}");
             }
         }
     }

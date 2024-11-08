@@ -15,6 +15,11 @@ using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using System.IO;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using Microsoft.TeamFoundation.TestClient.PublishTestResults.Telemetry;
+using Microsoft.VisualStudio.Services.Agent.Listener.Telemetry;
+using System.Collections.Generic;
+using Newtonsoft.Json;
+using Agent.Sdk.Knob;
 
 namespace Microsoft.VisualStudio.Services.Agent.Listener
 {
@@ -44,7 +49,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             {
                 var agentWebProxy = HostContext.GetService<IVstsAgentWebProxy>();
                 var agentCertManager = HostContext.GetService<IAgentCertificateManager>();
-                VssUtil.InitializeVssClientSettings(HostContext.UserAgent, agentWebProxy.WebProxy, agentCertManager.VssClientCertificateManager);
+                VssUtil.InitializeVssClientSettings(HostContext.UserAgent, agentWebProxy.WebProxy, agentCertManager.VssClientCertificateManager, agentCertManager.SkipServerCertificateValidation);
 
                 _inConfigStage = true;
                 _completedCommand.Reset();
@@ -113,6 +118,21 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                     try
                     {
                         await configManager.UnconfigureAsync(command);
+                        return Constants.Agent.ReturnCode.Success;
+                    }
+                    catch (Exception ex)
+                    {
+                        Trace.Error(ex);
+                        _term.WriteError(ex.Message);
+                        return Constants.Agent.ReturnCode.TerminatedError;
+                    }
+                }
+
+                if (command.IsReAuthCommand())
+                {
+                    try
+                    {
+                        await configManager.ReAuthAsync(command);
                         return Constants.Agent.ReturnCode.Success;
                     }
                     catch (Exception ex)
@@ -211,6 +231,20 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                 Trace.Info($"Set agent startup type - {startType}");
                 HostContext.StartupType = startType;
 
+                bool debugModeEnabled = command.GetDebugMode();
+
+                if (debugModeEnabled)
+                {
+                    Trace.Warning("Agent is running in debug mode, don't use it in production");
+                    settings.DebugMode = true;
+                    store.SaveSettings(settings);
+                }
+                else if (settings.DebugMode && !debugModeEnabled)
+                {
+                    settings.DebugMode = false;
+                    store.SaveSettings(settings);
+                }
+
                 if (PlatformUtil.RunningOnWindows)
                 {
                     if (store.IsAutoLogonConfigured())
@@ -227,6 +261,35 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                         }
                     }
                 }
+
+                //Publish inital telemetry data
+                var telemetryPublisher = HostContext.GetService<IAgenetListenerTelemetryPublisher>();
+
+                try
+                {
+                    var systemVersion = PlatformUtil.GetSystemVersion();
+
+                    Dictionary<string, string> telemetryData = new Dictionary<string, string>
+                    {
+                        { "OS", PlatformUtil.GetSystemId() ?? "" },
+                        { "OSVersion", systemVersion?.Name?.ToString() ?? "" },
+                        { "OSBuild", systemVersion?.Version?.ToString() ?? "" },
+                        { "configuredAsService", $"{configuredAsService}"},
+                        { "startupType", startupTypeAsString }
+                    };
+                    var cmd = new Command("telemetry", "publish");
+                    cmd.Data = JsonConvert.SerializeObject(telemetryData);
+                    cmd.Properties.Add("area", "PipelinesTasks");
+                    cmd.Properties.Add("feature", "AgentListener");
+                    await telemetryPublisher.PublishEvent(HostContext, cmd);
+                }
+
+                catch (Exception ex)
+                {
+                    Trace.Warning($"Unable to publish telemetry data. {ex}");
+                }
+
+
                 // Run the agent interactively or as service
                 return await RunAsync(settings, command.GetRunOnce());
             }
@@ -293,6 +356,18 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             try
             {
                 Trace.Info(nameof(RunAsync));
+
+                if (PlatformUtil.RunningOnWindows && AgentKnobs.CheckPsModulesLocations.GetValue(HostContext).AsBoolean())
+                {
+                    string psModulePath = Environment.GetEnvironmentVariable("PSModulePath");
+                    bool containsPwshLocations = PsModulePathUtil.ContainsPowershellCoreLocations(psModulePath);
+
+                    if (containsPwshLocations)
+                    {
+                        _term.WriteLine(StringUtil.Loc("PSModulePathLocations"));
+                    }
+                }
+
                 _listener = HostContext.GetService<IMessageListener>();
                 if (!await _listener.CreateSessionAsync(HostContext.AgentShutdownToken))
                 {
@@ -304,6 +379,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
 
                 IJobDispatcher jobDispatcher = null;
                 CancellationTokenSource messageQueueLoopTokenSource = CancellationTokenSource.CreateLinkedTokenSource(HostContext.AgentShutdownToken);
+                CancellationTokenSource keepAliveToken = CancellationTokenSource.CreateLinkedTokenSource(HostContext.AgentShutdownToken);
                 try
                 {
                     var notification = HostContext.GetService<IJobNotification>();
@@ -324,6 +400,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                     bool runOnceJobReceived = false;
                     jobDispatcher = HostContext.CreateService<IJobDispatcher>();
                     TaskAgentMessage previuosMessage = null;
+
+                    _ = _listener.KeepAlive(keepAliveToken.Token);
 
                     while (!HostContext.AgentShutdownToken.IsCancellationRequested)
                     {
@@ -512,6 +590,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                 }
                 finally
                 {
+                    keepAliveToken.Dispose();
+
                     if (jobDispatcher != null)
                     {
                         await jobDispatcher.ShutdownAsync();

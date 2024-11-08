@@ -18,6 +18,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using System.Net.Http;
 using Newtonsoft.Json.Linq;
+using Newtonsoft.Json;
+using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -40,6 +42,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         {
             set => _jobServerQueue = value;
         }
+
         public async Task<TaskResult> RunAsync(Pipelines.AgentJobRequestMessage message, CancellationToken jobRequestCancellationToken)
         {
             // Validate parameters.
@@ -53,6 +56,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             DateTime jobStartTimeUtc = DateTime.UtcNow;
 
             ServiceEndpoint systemConnection = message.Resources.Endpoints.Single(x => string.Equals(x.Name, WellKnownServiceEndpointNames.SystemVssConnection, StringComparison.OrdinalIgnoreCase));
+            bool skipServerCertificateValidation = HostContext.GetService<IAgentCertificateManager>().SkipServerCertificateValidation;
 
             // System.AccessToken
             if (message.Variables.ContainsKey(Constants.Variables.System.EnableAccessToken) &&
@@ -83,9 +87,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             VssConnection jobConnection = VssUtil.CreateConnection(
                 jobServerUrl,
                 jobServerCredential,
-                trace: Trace,
+                Trace,
+                skipServerCertificateValidation,
                 new DelegatingHandler[] { new ThrottlingReportHandler(_jobServerQueue) }
-                );
+            );
             await jobServer.ConnectAsync(jobConnection);
 
             _jobServerQueue.Start(message);
@@ -95,52 +100,34 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             CancellationTokenRegistration? agentShutdownRegistration = null;
             VssConnection taskConnection = null;
             VssConnection legacyTaskConnection = null;
-
+            IResourceMetricsManager resourceDiagnosticManager = null;
             try
             {
                 // Create the job execution context.
                 jobContext = HostContext.CreateService<IExecutionContext>();
                 jobContext.InitializeJob(message, jobRequestCancellationToken);
 
-                // Check if a system supports .NET 6
-                PackageVersion agentVersion = new PackageVersion(BuildConstants.AgentPackage.Version);
-                if (agentVersion.Major < 3)
-                {
-                    try
-                    {
-                        Trace.Verbose("Checking if your system supports .NET 6");
-
-                        string systemId = PlatformUtil.GetSystemId();
-                        SystemVersion systemVersion = PlatformUtil.GetSystemVersion();
-                        string notSupportNet6Message = null;
-
-                        if (await PlatformUtil.DoesSystemPersistsInNet6Whitelist())
-                        {
-                            // Check version of the system
-                            if (!await PlatformUtil.IsNet6Supported())
-                            {
-                                notSupportNet6Message = $"The operating system the agent is running on is \"{systemId}\" ({systemVersion}), which will not be supported by the .NET 6 based v3 agent. Please upgrade the operating system of this host to ensure compatibility with the v3 agent. See https://aka.ms/azdo-pipeline-agent-version";
-                            }
-                        }
-                        else
-                        {
-                            notSupportNet6Message = $"The operating system the agent is running on is \"{systemId}\" ({systemVersion}), which has not been tested with the .NET 6 based v3 agent. The v2 agent wil not automatically upgrade to the v3 agent. You can manually download the .NET 6 based v3 agent from https://github.com/microsoft/azure-pipelines-agent/releases. See https://aka.ms/azdo-pipeline-agent-version";
-                        }
-
-                        if (!string.IsNullOrWhiteSpace(notSupportNet6Message))
-                        {
-                            jobContext.AddIssue(new Issue() { Type = IssueType.Warning, Message = notSupportNet6Message });
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Trace.Error($"Error has occurred while checking if system supports .NET 6: {ex}");
-                    }
-                }
-
                 Trace.Info("Starting the job execution context.");
                 jobContext.Start();
                 jobContext.Section(StringUtil.Loc("StepStarting", message.JobDisplayName));
+
+                //Start Resource Diagnostics if enabled in the job message 
+                jobContext.Variables.TryGetValue("system.debug", out var systemDebug);
+
+                resourceDiagnosticManager = HostContext.GetService<IResourceMetricsManager>();
+                resourceDiagnosticManager.SetContext(jobContext);
+
+                if (string.Equals(systemDebug, "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (AgentKnobs.EnableResourceMonitorDebugOutput.GetValue(jobContext).AsBoolean())
+                    {
+                        _ = resourceDiagnosticManager.RunDebugResourceMonitorAsync();
+                    }
+                    else
+                    {
+                        jobContext.Debug(StringUtil.Loc("ResourceUtilizationDebugOutputIsDisabled"));
+                    }
+                }
 
                 agentShutdownRegistration = HostContext.AgentShutdownToken.Register(() =>
                 {
@@ -190,7 +177,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 jobContext.SetVariable(Constants.Variables.Agent.RootDirectory, HostContext.GetDirectory(WellKnownDirectory.Work), isFilePath: true);
                 if (PlatformUtil.RunningOnWindows)
                 {
-                    jobContext.SetVariable(Constants.Variables.Agent.ServerOMDirectory, HostContext.GetDirectory(WellKnownDirectory.ServerOM), isFilePath: true);
+                    string serverOMDirectoryVariable = AgentKnobs.InstallLegacyTfExe.GetValue(jobContext).AsBoolean()
+                        ? HostContext.GetDirectory(WellKnownDirectory.ServerOMLegacy)
+                        : HostContext.GetDirectory(WellKnownDirectory.ServerOM);
+
+                    jobContext.SetVariable(Constants.Variables.Agent.ServerOMDirectory, serverOMDirectoryVariable, isFilePath: true);
                 }
                 if (!PlatformUtil.RunningOnWindows)
                 {
@@ -199,17 +190,15 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 jobContext.SetVariable(Constants.Variables.Agent.WorkFolder, HostContext.GetDirectory(WellKnownDirectory.Work), isFilePath: true);
                 jobContext.SetVariable(Constants.Variables.System.WorkFolder, HostContext.GetDirectory(WellKnownDirectory.Work), isFilePath: true);
 
-                try
-                {
-                    jobContext.SetVariable(Constants.Variables.System.IsAzureVM, PlatformUtil.DetectAzureVM() ? "1" : "0");
-                    jobContext.SetVariable(Constants.Variables.System.IsDockerContainer, PlatformUtil.DetectDockerContainer() ? "1" : "0");
-                }
-                catch (Exception ex)
-                {
-                    // Error with telemetry shouldn't affect job run
-                    Trace.Info($"Couldn't retrieve telemetry information");
-                    Trace.Info(ex);
-                }
+                var azureVmCheckCommand = jobContext.GetHostContext().GetService<IAsyncCommandContext>();
+                azureVmCheckCommand.InitializeCommandContext(jobContext, Constants.AsyncExecution.Commands.Names.GetAzureVMMetada);
+                azureVmCheckCommand.Task = Task.Run(() => jobContext.SetVariable(Constants.Variables.System.IsAzureVM, PlatformUtil.DetectAzureVM() ? "1" : "0"));
+                jobContext.AsyncCommands.Add(azureVmCheckCommand);
+
+                var dockerDetectCommand = jobContext.GetHostContext().GetService<IAsyncCommandContext>();
+                dockerDetectCommand.InitializeCommandContext(jobContext, Constants.AsyncExecution.Commands.Names.DetectDockerContainer);
+                dockerDetectCommand.Task = Task.Run(() => jobContext.SetVariable(Constants.Variables.System.IsDockerContainer, PlatformUtil.DetectDockerContainer() ? "1" : "0"));
+                jobContext.AsyncCommands.Add(dockerDetectCommand);
 
                 string toolsDirectory = HostContext.GetDirectory(WellKnownDirectory.Tools);
                 Directory.CreateDirectory(toolsDirectory);
@@ -242,7 +231,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 {
                     Trace.Info($"Creating task server with {taskServerUri}");
 
-                    taskConnection = VssUtil.CreateConnection(taskServerUri, taskServerCredential, Trace);
+                    taskConnection = VssUtil.CreateConnection(taskServerUri, taskServerCredential, Trace, skipServerCertificateValidation);
                     await taskServer.ConnectAsync(taskConnection);
                 }
 
@@ -256,7 +245,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         taskServerUri = new Uri(configStore.GetSettings().ServerUrl);
 
                         Trace.Info($"Recreate task server with configuration server url: {taskServerUri}");
-                        legacyTaskConnection = VssUtil.CreateConnection(taskServerUri, taskServerCredential, trace: Trace);
+                        legacyTaskConnection = VssUtil.CreateConnection(taskServerUri, taskServerCredential, trace: Trace, skipServerCertificateValidation);
                         await taskServer.ConnectAsync(legacyTaskConnection);
                     }
                 }
@@ -300,6 +289,31 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     this.ExpandProperties(sidecar, jobContext.Variables);
                 }
 
+                // Send telemetry in case if git is preinstalled on windows platform
+                var isSelfHosted = StringUtil.ConvertToBoolean(jobContext.Variables.Get(Constants.Variables.Agent.IsSelfHosted));
+                if (PlatformUtil.RunningOnWindows && isSelfHosted)
+                {
+                    var windowsPreinstalledGitCommand = jobContext.GetHostContext().GetService<IAsyncCommandContext>();
+                    windowsPreinstalledGitCommand.InitializeCommandContext(jobContext, Constants.AsyncExecution.Commands.Names.WindowsPreinstalledGitTelemetry);
+                    windowsPreinstalledGitCommand.Task = Task.Run(() =>
+                    {
+                        var hasPreinstalledGit = false;
+
+                        var filePath = WhichUtil.Which("git.exe", require: false, trace: null);
+                        if (!string.IsNullOrEmpty(filePath))
+                        {
+                            hasPreinstalledGit = true;
+                        }
+
+                        PublishTelemetry(context: jobContext, area: "PipelinesTasks", feature: "WindowsGitTelemetry", properties: new Dictionary<string, string>
+                        {
+                            { "hasPreinstalledGit", hasPreinstalledGit.ToString() }
+                        });
+                    });
+
+                    jobContext.AsyncCommands.Add(windowsPreinstalledGitCommand);
+                }
+
                 // Get the job extension.
                 Trace.Info("Getting job extension.");
                 var hostType = jobContext.Variables.System_HostType;
@@ -321,9 +335,26 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 {
                     // set the job to canceled
                     // don't log error issue to job ExecutionContext, since server owns the job level issue
-                    Trace.Error($"Job is canceled during initialize.");
-                    Trace.Error($"Caught exception: {ex}");
-                    return await CompleteJobAsync(jobServer, jobContext, message, TaskResult.Canceled);
+                    if (AgentKnobs.FailJobWhenAgentDies.GetValue(jobContext).AsBoolean() &&
+                        HostContext.AgentShutdownToken.IsCancellationRequested)
+                    {
+                        PublishTelemetry(context: jobContext, area: "PipelinesTasks", feature: "AgentShutdown", properties: new Dictionary<string, string>
+                        {
+                            { "JobId", jobContext.Variables.System_JobId.ToString() },
+                            { "JobResult", TaskResult.Failed.ToString() },
+                            { "TracePoint", "111"},
+                        });
+
+                        Trace.Error($"Job is canceled during initialize.");
+                        Trace.Error($"Caught exception: {ex}");
+                        return await CompleteJobAsync(jobServer, jobContext, message, TaskResult.Failed);
+                    }
+                    else
+                    {
+                        Trace.Error($"Job is canceled during initialize.");
+                        Trace.Error($"Caught exception: {ex}");
+                        return await CompleteJobAsync(jobServer, jobContext, message, TaskResult.Canceled);
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -526,7 +557,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 }
                 catch (AggregateException ex)
                 {
-                    ExceptionsUtil.HandleAggregateException((AggregateException)ex, Trace.Error);
+                    ExceptionsUtil.HandleAggregateException(ex, Trace.Error);
+
+                    if (throwOnFailure)
+                    {
+                        throw;
+                    }
                 }
                 catch (Exception ex) when (!throwOnFailure)
                 {
@@ -618,6 +654,25 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 string tfsServerUrl = message.Variables[Constants.Variables.System.TFServerUrl].Value;
                 message.Variables[Constants.Variables.System.TFServerUrl] = ReplaceWithConfigUriBase(new Uri(tfsServerUrl)).AbsoluteUri;
                 Trace.Info($"Ensure System.TFServerUrl match config url base. {message.Variables[Constants.Variables.System.TFServerUrl].Value}");
+            }
+        }
+
+        private void PublishTelemetry(IExecutionContext context, string area, String feature, Dictionary<string, string> properties)
+        {
+            try
+            {
+                var cmd = new Command("telemetry", "publish");
+                cmd.Data = JsonConvert.SerializeObject(properties, Formatting.None);
+                cmd.Properties.Add("area", area);
+                cmd.Properties.Add("feature", feature);
+
+                var publishTelemetryCmd = new TelemetryCommandExtension();
+                publishTelemetryCmd.Initialize(HostContext);
+                publishTelemetryCmd.ProcessCommand(context, cmd);
+            }
+            catch (Exception ex)
+            {
+                Trace.Warning($"Unable to publish agent shutdown telemetry data. Exception: {ex}");
             }
         }
     }

@@ -1,3 +1,4 @@
+# This Yaml Document has been converted by ESAI Yaml Pipeline Conversion Tool.
 parameters:
 
 - name: jobName
@@ -12,6 +13,9 @@ parameters:
 - name: container
   type: string
 
+- name: targetFramework
+  type: string
+
 - name: timeoutInMinutes
   type: number
 
@@ -23,8 +27,8 @@ parameters:
   values:
   - win
   - linux
+  - linux-musl
   - osx
-  - rhel.6
 
 - name: arch
   type: string
@@ -41,9 +45,6 @@ parameters:
   type: boolean
 
 - name: codeCoverage
-  type: boolean
-
-- name: componentDetection
   type: boolean
 
 - name: sign
@@ -66,16 +67,39 @@ parameters:
   - agent
   - pipelines-agent
 
+- name: disableSdl
+  type: boolean
+  default: false
+
+- name: justificationForDisablingSdl
+  type: string
+  default: ''
+
 jobs:
 
 - job: ${{ parameters.jobName }}
   displayName: ${{ parameters.displayName }}
   pool: ${{ parameters.pool }}
   timeoutInMinutes: ${{ parameters.timeoutInMinutes }}
+  ${{ if eq(parameters.targetFramework, 'all') }}:
+    strategy:
+      matrix:
+        NET6.0:
+          targetFramework: 'net6.0'
+        NET8.0:
+          targetFramework: 'net8.0'
+
 
   ${{ if ne(parameters.container, '') }}:
     container: ${{ parameters.container }}
 
+  ${{ if eq(parameters.disableSdl, true) }}:
+    parameters:
+      sdl:
+        codeql:
+          compiled:
+            enabled: false
+            justificationForDisabling: ${{ parameters.justificationForDisablingSdl}}
   variables:
     PACKAGE_TYPE: ${{ parameters.packageType }}
     ${{ if eq(parameters.os, 'win') }}:
@@ -83,41 +107,72 @@ jobs:
     ${{ if ne(parameters.os, 'win') }}:
       devCommand: ./dev.sh
     layoutRoot: '_layout/${{ parameters.os }}-${{ parameters.arch }}'
-    ${{ if eq(parameters.os, 'rhel.6') }}:
-      AGENT_USE_NODE10: true
-
+    DisableCFSDetector: true
+    DisableDockerDetector: true
+    nugetMultiFeedWarnLevel: none
+    CheckoutBranch: ${{ parameters.branch }}
+    ${{ if ne(parameters.targetFramework, 'all') }}:
+      targetFramework: ${{ parameters.targetFramework }}
+  templateContext:
+    outputs:
+    - ${{ if or(parameters.unitTests, parameters.functionalTests) }}:
+      - output: buildArtifacts
+        displayName: 'Publish Test logs'
+        condition: always()
+        PathtoPublish: src/Test/TestLogs
+        ArtifactName: ${{ parameters.os }}-${{ parameters.arch }}-$(System.JobId)
+    - ${{ if eq(parameters.publishArtifact, true) }}:
+      - output: buildArtifacts
+        displayName: 'Publish Hash Artifact'
+        PathtoPublish: _package
+        ArtifactName: agent
+    - ${{ if eq(parameters.publishArtifact, true) }}:
+      - output: buildArtifacts
+        displayName: 'Publish Agent Artifact'
+        PathtoPublish: _package_hash
+        ArtifactName: hash
   steps:
 
-  # Component detection
-  - ${{ if parameters.componentDetection }}:
-    - task: ms.vss-governance-buildtask.governance-build-task-component-detection.ComponentGovernanceComponentDetection@0
-      displayName: 'Component Detection'
-
-  # Clean
   - checkout: self
     clean: true
 
-  # Switch to branch if set
-  - ${{ if ne(parameters.branch, '') }}:
-    - template: switch-branch.yml
-      parameters:
-        branch: ${{ parameters.branch }}
+  - task: Bash@3
+    displayName: Switch to target branch
+    inputs:
+      filePath: .azure-pipelines/scripts/switch-branch.sh
+    env:
+      TARGET_BRANCH: $(CheckoutBranch)
+    condition: |
+      and(
+        eq(variables['Build.SourceBranch'], 'refs/heads/master'),
+        ne(variables.CheckoutBranch, '')
+      )
 
   # 1ES images used on the ARM pool doesn't contain unzip tool, so we need to install it before starting the build
-  - ${{ if eq(parameters.arch, 'arm64') }}:
-    - script: sudo apt-get update && sudo apt-get -y install unzip
+  - ${{ if and(eq(parameters.arch, 'arm64'), ne(parameters.os, 'osx')) }}:
+    - script: sudo dnf -y update && sudo dnf -y install unzip
       displayName: Install unzip
+      retryCountOnTaskFailure: 5
+
+  # Install nuget
+  - ${{ if eq(parameters.os, 'win') }}:
+    - task: NuGetToolInstaller@1
+      displayName: Install NuGet for signing tests
+
+  # Set up auth for nuget for when new packages need to be consumed
+  - task: NuGetAuthenticate@1
 
   # Build agent layout
-  - script: ${{ variables.devCommand }} layout Release ${{ parameters.os }}-${{ parameters.arch }}
+  - script: ${{ variables.devCommand }} layout $(targetFramework) Release ${{ parameters.os }}-${{ parameters.arch }}
     workingDirectory: src
     displayName: Build & Layout Release
+    retryCountOnTaskFailure: 5
     ${{ if parameters.enableADOLogIssue }}:
       env:
         ADO_ENABLE_LOGISSUE: true
 
   # Check if broken symlinks exist in the agent build
-  - task: Bash@3.201.1
+  - task: Bash@3
     inputs:
       filePath: src/Misc/check-symlinks.sh
     displayName: Check symlinks
@@ -126,33 +181,28 @@ jobs:
   - ${{ if parameters.unitTests }}:
     - ${{ if and(eq(parameters.os, 'win'), eq(parameters.arch, 'x86')) }}:
       - task: UseDotNet@2
-        displayName: Install .NET Core 3.1 SDK
+        displayName: Install .NET Core 6 Runtime
         inputs:
-          version: '3.1.x'
+          version: '6.0.x'
           packageType: 'runtime'
           installationPath: 'C:\Program Files (x86)\dotnet'
         env:
           PROCESSOR_ARCHITECTURE: x86
-    - script: ${{ variables.devCommand }} testl0 Debug ${{ parameters.os }}-${{ parameters.arch }}
+    - script: ${{ variables.devCommand }} testl0 $(targetFramework) Debug ${{ parameters.os }}-${{ parameters.arch }}
       workingDirectory: src
       displayName: Unit tests
-
-  # Install nuget
-  - ${{ if eq(parameters.os, 'win') }}:
-    - task: NuGetToolInstaller@1
-      displayName: Install NuGet for signing tests
+      timeoutInMinutes: 5
 
   # Run l1 tests
   - ${{ if parameters.functionalTests }}:
     - ${{ if and(eq(parameters.os, 'win'), eq(parameters.arch, 'x86')) }}:
       - task: UseDotNet@2
-        displayName: Install .NET Core 3.1 SDK
+        displayName: Install .NET Core 6 SDK
         inputs:
-          version: '3.1.x'
-          packageType: runtime
+          version: '6.0.424'
+          packageType: sdk
           performMultiLevelLookup: true
-          installationPath: 'C:\Program Files (x86)\dotnet'
-    - script: ${{ variables.devCommand }} testl1 Debug ${{ parameters.os }}-${{ parameters.arch }}
+    - script: ${{ variables.devCommand }} testl1 $(targetFramework) Debug ${{ parameters.os }}-${{ parameters.arch }}
       workingDirectory: src
       displayName: Functional tests
 
@@ -164,15 +214,6 @@ jobs:
         testRunner: VSTest
         testResultsFiles: '**/*.trx'
         testRunTitle: 'Agent Tests - ${{ parameters.os }}-${{ parameters.arch }}'
-      condition: always()
-
-    # Upload test log
-    - task: PublishBuildArtifacts@1.200.0
-      displayName: Publish Test logs
-      inputs:
-        pathToPublish: src/Test/TestLogs
-        artifactName: ${{ parameters.os }}-${{ parameters.arch }}-$(System.JobId)
-        artifactType: container
       condition: always()
 
   # Code coverage
@@ -198,7 +239,7 @@ jobs:
 
   - ${{ if parameters.sign }}:
     # Signing steps
-    - template: signing.yml
+    - template: /.azure-pipelines/signing.yml@self
       parameters:
         layoutRoot: ${{ variables.layoutRoot }}
         isWindows: ${{ eq(parameters.os, 'win') }}
@@ -208,37 +249,20 @@ jobs:
 
     # Package .NET Core Windows dependency (VC++ Redistributable)
     - ${{ if eq(parameters.os, 'win') }}:
-      - template: package-vcredist.yml
+      - template: /.azure-pipelines/package-vcredist.yml@self
         parameters:
           layoutRoot: ${{ variables.layoutRoot }}
           flavor: ${{ parameters.arch }}
 
     # Create agent package zip
-    - script: "${{ variables.devCommand }} package Release ${{ parameters.os }}-${{ parameters.arch }}"
+    - script: "${{ variables.devCommand }} package $(targetFramework) Release ${{ parameters.os }}-${{ parameters.arch }}"
       workingDirectory: src
       displayName: Package Release
 
-    - script: "${{ variables.devCommand }} hash Release ${{ parameters.os }}-${{ parameters.arch }}"
+    - script: "${{ variables.devCommand }} hash $(targetFramework) Release ${{ parameters.os }}-${{ parameters.arch }}"
       workingDirectory: src
       displayName: Hash Package
 
-    # Upload agent package zip as build artifact
-    - task: PublishBuildArtifacts@1.200.0
-      displayName: Publish Artifact
-      inputs:
-        pathToPublish: _package
-        artifactName: agent
-        artifactType: container
-
-    # Publish agent package hash too
-    - task: PublishBuildArtifacts@1.200.0
-      displayName: Publish Artifact
-      inputs:
-        pathToPublish: _package_hash
-        artifactName: hash
-        artifactType: container
-
-  # Signing verification
   - ${{ if parameters.verifySigning }}:
 
     # Verify all binaries are signed (generate report)

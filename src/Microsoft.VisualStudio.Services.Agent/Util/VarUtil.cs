@@ -70,10 +70,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
         /// Example: env.var -> ENV_VAR
         /// </summary>
         /// <param name="value"></param>
+        /// <param name="preserveCase"></param>
         /// <returns></returns>
-        public static string ConvertToEnvVariableFormat(string value)
+        public static string ConvertToEnvVariableFormat(string value, bool preserveCase)
         {
-            return value?.Replace('.', '_').Replace(' ', '_').ToUpperInvariant() ?? string.Empty;
+            string envVar = value?.Replace('.', '_').Replace(' ', '_') ?? string.Empty;
+            return preserveCase ? envVar : envVar.ToUpperInvariant();
         }
 
         public static JToken ExpandEnvironmentVariables(IHostContext context, JToken target)
@@ -140,7 +142,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
             return target.Map(mapFuncs);
         }
 
-        public static void ExpandValues(IHostContext context, IDictionary<string, string> source, IDictionary<string, string> target)
+        public static void ExpandValues(IHostContext context, IDictionary<string, string> source, IDictionary<string, string> target, bool enableVariableInputTrimming = false)
         {
             ArgUtil.NotNull(context, nameof(context));
             ArgUtil.NotNull(source, nameof(source));
@@ -180,6 +182,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
                             targetValue.Substring(0, prefixIndex),
                             variableValue ?? string.Empty,
                             targetValue.Substring(suffixIndex + Constants.Variables.MacroSuffix.Length));
+
+                        targetValue = enableVariableInputTrimming
+                            ? targetValue?.Trim() ?? string.Empty
+                            : targetValue ?? string.Empty;
 
                         // Bump the start index to prevent recursive replacement.
                         startIndex = prefixIndex + (variableValue ?? string.Empty).Length;

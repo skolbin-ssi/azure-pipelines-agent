@@ -19,6 +19,7 @@ using Microsoft.VisualStudio.Services.PipelineCache.WebApi;
 using Microsoft.VisualStudio.Services.WebApi;
 using JsonSerializer = Microsoft.VisualStudio.Services.Content.Common.JsonSerializer;
 using Microsoft.VisualStudio.Services.BlobStore.Common;
+using Microsoft.VisualStudio.Services.Agent.Util;
 
 namespace Agent.Plugins.PipelineCache
 {
@@ -47,6 +48,8 @@ namespace Agent.Plugins.PipelineCache
                     connection,
                     DedupManifestArtifactClientFactory.Instance.GetDedupStoreClientMaxParallelism(context),
                     WellKnownDomainIds.DefaultDomainId,
+                    Microsoft.VisualStudio.Services.BlobStore.WebApi.Contracts.Client.PipelineCache,
+                    context,
                     cancellationToken);
 
             PipelineCacheClient pipelineCacheClient = await this.CreateClientWithRetryAsync(clientTelemetry, context, connection, cancellationToken);
@@ -102,7 +105,15 @@ namespace Agent.Plugins.PipelineCache
                     {
                         if (File.Exists(uploadPath))
                         {
-                            File.Delete(uploadPath);
+                            try
+                            {
+                                await IOUtil.DeleteFileWithRetry(uploadPath, cancellationToken);
+                            }
+                            catch (Exception ex)
+                            {
+                                tracer.Warn($"Unable to delete pipeline cache file, ex:{ex.GetType()}");
+                                throw;
+                            }
                         }
                     }
                     catch { }
@@ -159,6 +170,8 @@ namespace Agent.Plugins.PipelineCache
                     connection,
                     DedupManifestArtifactClientFactory.Instance.GetDedupStoreClientMaxParallelism(context),
                     WellKnownDomainIds.DefaultDomainId,
+                    Microsoft.VisualStudio.Services.BlobStore.WebApi.Contracts.Client.PipelineCache,
+                    context,
                     cancellationToken);
 
             PipelineCacheClient pipelineCacheClient = await this.CreateClientWithRetryAsync(clientTelemetry, context, connection, cancellationToken);
@@ -306,7 +319,15 @@ namespace Agent.Plugins.PipelineCache
                 {
                     if (File.Exists(manifestPath))
                     {
-                        File.Delete(manifestPath);
+                        try
+                        {
+                            await IOUtil.DeleteFileWithRetry(manifestPath, cancellationToken);
+                        }
+                        catch (Exception ex)
+                        {
+                            tracer.Warn($"Unable to delete manifest file, ex:{ex.GetType()}");
+                            throw;
+                        }
                     }
                 }
                 catch { }

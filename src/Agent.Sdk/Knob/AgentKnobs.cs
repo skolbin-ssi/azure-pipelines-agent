@@ -107,6 +107,20 @@ namespace Agent.Sdk.Knob
             new EnvironmentKnobSource("system.prefergitfrompath"),
             new BuiltInDefaultKnobSource("false"));
 
+        public static readonly Knob UseGit2_39_4 = new Knob(
+            nameof(UseGit2_39_4),
+            "If true, Git v2.39.4 will be used instead of the default version.",
+            new RuntimeKnobSource("USE_GIT_2_39_4"),
+            new EnvironmentKnobSource("USE_GIT_2_39_4"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseGit2_42_0_2 = new Knob(
+            nameof(UseGit2_42_0_2),
+            "If true, Git v2.42.0.2 will be used instead of the default version.",
+            new RuntimeKnobSource("USE_GIT_2_42_0_2"),
+            new EnvironmentKnobSource("USE_GIT_2_42_0_2"),
+            new BuiltInDefaultKnobSource("false"));
+
         public static readonly Knob DisableGitPrompt = new Knob(
             nameof(DisableGitPrompt),
             "If true, git will not prompt on the terminal (e.g., when asking for HTTP authentication).",
@@ -120,6 +134,33 @@ namespace Agent.Sdk.Knob
             new RuntimeKnobSource("agent.GitUseSecureParameterPassing"),
             new EnvironmentKnobSource("AGENT_GIT_USE_SECURE_PARAMETER_PASSING"),
             new BuiltInDefaultKnobSource("true"));
+
+        public static readonly Knob FixPossibleGitOutOfMemoryProblem = new Knob(
+            nameof(FixPossibleGitOutOfMemoryProblem),
+            "When true, set config git properties to fix possible out of memory problem",
+            new RuntimeKnobSource("FIX_POSSIBLE_GIT_OUT_OF_MEMORY_PROBLEM"),
+            new EnvironmentKnobSource("FIX_POSSIBLE_GIT_OUT_OF_MEMORY_PROBLEM"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseGitLongPaths = new Knob(
+            nameof(UseGitLongPaths),
+            "When true, set core.longpaths to true",
+            new RuntimeKnobSource("USE_GIT_LONG_PATHS"),
+            new EnvironmentKnobSource("USE_GIT_LONG_PATHS"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseGitSingleThread = new Knob(
+            nameof(UseGitSingleThread),
+            "When true, spawn only one thread searching for best delta matches",
+            new RuntimeKnobSource("USE_GIT_SINGLE_THREAD"),
+            new EnvironmentKnobSource("USE_GIT_SINGLE_THREAD"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AgentTerminalEncoding = new Knob(
+            nameof(AgentTerminalEncoding),
+            "If the correct encoding name is specified, the encoding from the environment will be used instead of default UTF-8",
+            new EnvironmentKnobSource("AGENT_TERMINAL_ENCODING"),
+            new BuiltInDefaultKnobSource(string.Empty));
 
         public static readonly Knob TfVCUseSecureParameterPassing = new Knob(
             nameof(TfVCUseSecureParameterPassing),
@@ -145,6 +186,20 @@ namespace Agent.Sdk.Knob
             new EnvironmentKnobSource("AGENT_USE_NODE10"),
             new BuiltInDefaultKnobSource("false"));
 
+        public static readonly Knob UseNode20_1 = new Knob(
+            nameof(UseNode20_1),
+            "Forces the agent to use Node 20 handler for all Node-based tasks",
+            new RuntimeKnobSource("AGENT_USE_NODE20_1"),
+            new EnvironmentKnobSource("AGENT_USE_NODE20_1"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseNode20InUnsupportedSystem = new Knob(
+            nameof(UseNode20InUnsupportedSystem),
+            "Forces the agent to use Node 20 handler for all Node-based tasks, even if it's in an unsupported system",
+            new RuntimeKnobSource("AGENT_USE_NODE20_IN_UNSUPPORTED_SYSTEM"),
+            new EnvironmentKnobSource("AGENT_USE_NODE20_IN_UNSUPPORTED_SYSTEM"),
+            new BuiltInDefaultKnobSource("false"));
+
         // Agent logging
         public static readonly Knob AgentPerflog = new Knob(
             nameof(AgentPerflog),
@@ -158,11 +213,24 @@ namespace Agent.Sdk.Knob
             new EnvironmentKnobSource("VSTSAGENT_TRACE"),
             new BuiltInDefaultKnobSource(string.Empty));
 
+        public static readonly Knob DebugTask = new Knob(
+            nameof(DebugTask),
+            "If the agent executes a task which ID or name matches the value provided, it will run the task so that it will wait for debugger to attach",
+            new EnvironmentKnobSource("VSTSAGENT_DEBUG_TASK"),
+            new BuiltInDefaultKnobSource(string.Empty));
+
         public static readonly Knob DumpJobEventLogs = new Knob(
             nameof(DumpJobEventLogs),
             "If true, dump event viewer logs",
             new RuntimeKnobSource("VSTSAGENT_DUMP_JOB_EVENT_LOGS"),
             new EnvironmentKnobSource("VSTSAGENT_DUMP_JOB_EVENT_LOGS"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob DisableTestsMetadata = new Knob(
+            nameof(DisableTestsMetadata),
+            "If true, publishing tests metadata to evidence store will be disabled.",
+            new RuntimeKnobSource("AZP_AGENT_DISABLE_TESTS_METADATA"),
+            new EnvironmentKnobSource("AZP_AGENT_DISABLE_TESTS_METADATA"),
             new BuiltInDefaultKnobSource("false"));
 
         // Diag logging
@@ -202,6 +270,27 @@ namespace Agent.Sdk.Knob
             "Attempts to download a task when starting a job",
             new EnvironmentKnobSource("VSTS_TASK_DOWNLOAD_RETRY_LIMIT"),
             new BuiltInDefaultKnobSource("3"));
+
+        public static readonly Knob ProccessSigintTimeout = new Knob(
+            nameof(ProccessSigintTimeout),
+            "Timeout for SIGINT signal during a process cancelation",
+            new RuntimeKnobSource("PROCESS_SIGINT_TIMEOUT"),
+            new EnvironmentKnobSource("PROCESS_SIGINT_TIMEOUT"),
+            new BuiltInDefaultKnobSource("7500"));
+
+        public static readonly Knob ProccessSigtermTimeout = new Knob(
+            nameof(ProccessSigtermTimeout),
+            "Timeout for SIGTERM signal during a process cancelation",
+            new RuntimeKnobSource("PROCESS_SIGTERM_TIMEOUT"),
+            new EnvironmentKnobSource("PROCESS_SIGTERM_TIMEOUT"),
+            new BuiltInDefaultKnobSource("2500"));
+
+        public static readonly Knob UseGracefulProcessShutdown = new Knob(
+            nameof(UseGracefulProcessShutdown),
+            "Attemts to use only graceful process shutdown unless hard required",
+            new RuntimeKnobSource("USE_GRACEFUL_PROCESS_SHUTDOWN"),
+            new EnvironmentKnobSource("USE_GRACEFUL_PROCESS_SHUTDOWN"),
+            new BuiltInDefaultKnobSource("false"));
 
         // HTTP
         public const string LegacyHttpVariableName = "AZP_AGENT_USE_LEGACY_HTTP";
@@ -263,12 +352,6 @@ namespace Agent.Sdk.Knob
             new EnvironmentKnobSource("SYSTEM_UNSAFEALLOWMULTILINESECRET"),
             new BuiltInDefaultKnobSource("false"));
 
-        public static readonly Knob MaskUsingCredScanRegexes = new Knob(
-            nameof(MaskUsingCredScanRegexes),
-            "Use the CredScan regexes for masking secrets. CredScan is an internal tool developed at Microsoft to keep passwords and authentication keys from being checked in. This defaults to disabled, as there are performance problems with some task outputs.",
-            new EnvironmentKnobSource("AZP_USE_CREDSCAN_REGEXES"),
-            new BuiltInDefaultKnobSource("false"));
-
         public static readonly Knob MaskedSecretMinLength = new Knob(
             nameof(MaskedSecretMinLength),
             "Specify the length of the secrets, which, if shorter, will be ignored in the logs.",
@@ -277,10 +360,37 @@ namespace Agent.Sdk.Knob
             new BuiltInDefaultKnobSource("0"));
 
         // Misc
+        public static readonly Knob EnableIssueSourceValidation = new Knob(
+            nameof(EnableIssueSourceValidation),
+            "When true, enable issue source validation for the task.issue command.",
+            new RuntimeKnobSource("ENABLE_ISSUE_SOURCE_VALIDATION"),
+            new BuiltInDefaultKnobSource("false"));
+
         public static readonly Knob DisableAgentDowngrade = new Knob(
             nameof(DisableAgentDowngrade),
             "Disable agent downgrades. Upgrades will still be allowed.",
             new EnvironmentKnobSource("AZP_AGENT_DOWNGRADE_DISABLED"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AcknowledgeNoUpdates = new Knob(
+            nameof(AcknowledgeNoUpdates),
+            "Opt-in to continue using agent without updates on unsopperted OS",
+            new EnvironmentKnobSource("AGENT_ACKNOWLEDGE_NO_UPDATES"),
+            new RuntimeKnobSource("AGENT_ACKNOWLEDGE_NO_UPDATES"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AgentFailOnIncompatibleOS = new Knob(
+            nameof(AgentFailOnIncompatibleOS),
+            "Allow agent to fail pipelines on incompatible OS",
+            new EnvironmentKnobSource("AGENT_FAIL_ON_INCOMPATIBLE_OS"),
+            new RuntimeKnobSource("AGENT_FAIL_ON_INCOMPATIBLE_OS"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AgentEnablePipelineArtifactLargeChunkSize = new Knob(
+            nameof(AgentEnablePipelineArtifactLargeChunkSize),
+            "Enables large chunk size for pipeline artifacts.",
+            new EnvironmentKnobSource("AGENT_ENABLE_PIPELINEARTIFACT_LARGE_CHUNK_SIZE"),
+            new RuntimeKnobSource("AGENT_ENABLE_PIPELINEARTIFACT_LARGE_CHUNK_SIZE"),
             new BuiltInDefaultKnobSource("false"));
 
         public static readonly Knob PermissionsCheckFailsafe = new Knob(
@@ -293,7 +403,15 @@ namespace Agent.Sdk.Knob
             nameof(DisableInputTrimming),
             "By default, the agent trims whitespace and new line characters from all task inputs. Setting this to true disables this behavior.",
             new EnvironmentKnobSource("DISABLE_INPUT_TRIMMING"),
+            new RuntimeKnobSource("DISABLE_INPUT_TRIMMING"),
             new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob EnableVariableInputTrimming = new Knob(
+           nameof(EnableVariableInputTrimming),
+           "By default, the agent does not trim whitespace and new line characters if an input comes from a variable. Setting this to true enables this behavior.",
+           new EnvironmentKnobSource("AGENT_ENABLE_VARIABLE_INPUT_TRIMMING"),
+           new RuntimeKnobSource("AGENT_ENABLE_VARIABLE_INPUT_TRIMMING"),
+           new BuiltInDefaultKnobSource("false"));
 
         public static readonly Knob DecodePercents = new Knob(
             nameof(DecodePercents),
@@ -307,6 +425,13 @@ namespace Agent.Sdk.Knob
             "By default, the TFVC unshelve command does not throw errors e.g. when there's no mapping for one or more files shelved. Setting this to true enables this behavior.",
             new RuntimeKnobSource("ALLOW_TFVC_UNSHELVE_ERRORS"),
             new EnvironmentKnobSource("ALLOW_TFVC_UNSHELVE_ERRORS"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob EnableFCSItemPathFix = new Knob(
+            nameof(EnableFCSItemPathFix),
+            "If true, enable the fix for the path of the item when associating or uploading to the file container server.",
+            new RuntimeKnobSource("ENABLE_FCS_ITEM_PATH_FIX"),
+            new EnvironmentKnobSource("ENABLE_FCS_ITEM_PATH_FIX"),
             new BuiltInDefaultKnobSource("false"));
 
         // Set DISABLE_JAVA_CAPABILITY_HIGHER_THAN_9 variable with any value
@@ -324,6 +449,18 @@ namespace Agent.Sdk.Knob
             new RuntimeKnobSource("DISABLE_BUILD_ARTIFACTS_TO_BLOB"),
             new EnvironmentKnobSource("DISABLE_BUILD_ARTIFACTS_TO_BLOB"),
             new BuiltInDefaultKnobSource("false"));
+        public static readonly Knob SendBuildArtifactsToBlobstoreDomain = new Knob(
+            nameof(SendBuildArtifactsToBlobstoreDomain),
+            "When set, defines the domain to use to send Build artifacts to.",
+            new RuntimeKnobSource("SEND_BUILD_ARTIFACTS_TO_BLOBSTORE_DOMAIN"),
+            new EnvironmentKnobSource("SEND_BUILD_ARTIFACT_ARTIFACTS_TO_BLOBSTORE_DOMAIN"),
+            new BuiltInDefaultKnobSource(string.Empty));
+        public static readonly Knob SendPipelineArtifactsToBlobstoreDomain = new Knob(
+            nameof(SendPipelineArtifactsToBlobstoreDomain),
+            "When set, defines the domain to use to send Pipeline artifacts to.",
+            new RuntimeKnobSource("SEND_PIPELINE_ARTIFACTS_TO_BLOBSTORE_DOMAIN"),
+            new EnvironmentKnobSource("SEND_PIPELINE_ARTIFACT_ARTIFACTS_TO_BLOBSTORE_DOMAIN"),
+            new BuiltInDefaultKnobSource(string.Empty));
 
         public static readonly Knob EnableIncompatibleBuildArtifactsPathResolution = new Knob(
             nameof(EnableIncompatibleBuildArtifactsPathResolution),
@@ -364,6 +501,13 @@ namespace Agent.Sdk.Knob
             new RuntimeKnobSource("DISABLE_NODE6_DEPRECATION_WARNING"),
             new EnvironmentKnobSource("DISABLE_NODE6_DEPRECATION_WARNING"),
             new BuiltInDefaultKnobSource("true"));
+
+        public static readonly Knob DisableNode6Tasks = new Knob(
+            nameof(DisableNode6Tasks),
+            "Disables Node 6 tasks and Node 6 runner.",
+            new RuntimeKnobSource("AGENT_DISABLE_NODE6_TASKS"),
+            new EnvironmentKnobSource("AGENT_DISABLE_NODE6_TASKS"),
+            new BuiltInDefaultKnobSource("false"));
 
         public static readonly Knob DisableTeePluginRemoval = new Knob(
             nameof(DisableTeePluginRemoval),
@@ -410,5 +554,230 @@ namespace Agent.Sdk.Knob
             new RuntimeKnobSource("AGENT_USE_NODE"),
             new EnvironmentKnobSource("AGENT_USE_NODE"),
             new BuiltInDefaultKnobSource(string.Empty));
+
+        public static readonly Knob ProcessHandlerSecureArguments = new Knob(
+            nameof(ProcessHandlerSecureArguments),
+            "Enables passing arguments for process handler secure way",
+            new RuntimeKnobSource("AZP_75787_ENABLE_NEW_LOGIC"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob ProcessHandlerSecureArgumentsAudit = new Knob(
+            nameof(ProcessHandlerSecureArguments),
+            "Enables logging of passing arguments for process handler secure way",
+            new RuntimeKnobSource("AZP_75787_ENABLE_NEW_LOGIC_LOG"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob ProcessHandlerTelemetry = new Knob(
+            nameof(ProcessHandlerTelemetry),
+            "Enables publishing telemetry about processing of arguments for Process Handler",
+            new RuntimeKnobSource("AZP_75787_ENABLE_COLLECT"),
+            new EnvironmentKnobSource("AZP_75787_ENABLE_COLLECT"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseNewNodeHandlerTelemetry = new Knob(
+            nameof(UseNewNodeHandlerTelemetry),
+            "Enables new approach to publish node handler information to the telemetry",
+            new PipelineFeatureSource("USENEWNODEHANDLERTELEMETRY"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob ProcessHandlerEnableNewLogic = new Knob(
+            nameof(ProcessHandlerEnableNewLogic),
+            "Enables new args protect logic for process handler",
+            new RuntimeKnobSource("AZP_75787_ENABLE_NEW_PH_LOGIC"),
+            new EnvironmentKnobSource("AZP_75787_ENABLE_NEW_PH_LOGIC"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseProcessHandlerV2 = new Knob(
+            nameof(UseProcessHandlerV2),
+            "Enables new Process handler (v2)",
+            new PipelineFeatureSource("UseProcessHandlerV2"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob DisableDrainQueuesAfterTask = new Knob(
+            nameof(DisableDrainQueuesAfterTask),
+            "Forces the agent to disable draining queues after each task",
+            new RuntimeKnobSource("AGENT_DISABLE_DRAIN_QUEUES_AFTER_TASK"),
+            new EnvironmentKnobSource("AGENT_DISABLE_DRAIN_QUEUES_AFTER_TASK"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob EnableResourceMonitorDebugOutput = new Knob(
+            nameof(EnableResourceMonitorDebugOutput),
+            "If true, the agent will show the resource monitor output for debug runs",
+            new RuntimeKnobSource("AZP_ENABLE_RESOURCE_MONITOR_DEBUG_OUTPUT"),
+            new EnvironmentKnobSource("AZP_ENABLE_RESOURCE_MONITOR_DEBUG_OUTPUT"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob EnableResourceUtilizationWarnings = new Knob(
+            nameof(EnableResourceUtilizationWarnings),
+            "If true, the agent will throw the resource utilization warnings",
+            new RuntimeKnobSource("AZP_ENABLE_RESOURCE_UTILIZATION_WARNINGS"),
+            new EnvironmentKnobSource("AZP_ENABLE_RESOURCE_UTILIZATION_WARNINGS"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob ForceCreateTasksDirectory = new Knob(
+            nameof(ForceCreateTasksDirectory),
+            "Forces the agent to create _tasks folder for tasks.",
+            new RuntimeKnobSource("AGENT_FORCE_CREATE_TASKS_DIRECTORY"),
+            new EnvironmentKnobSource("AGENT_FORCE_CREATE_TASKS_DIRECTORY"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob CleanupPSModules = new Knob(
+            nameof(CleanupPSModules),
+            "Removes the PSModulePath environment variable if the agent is running in PowerShell.",
+            new RuntimeKnobSource("AZP_AGENT_CLEANUP_PSMODULES_IN_POWERSHELL"),
+            new EnvironmentKnobSource("AZP_AGENT_CLEANUP_PSMODULES_IN_POWERSHELL"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob DisableCleanRepoDefaultValue = new DeprecatedKnob(
+            nameof(DisableCleanRepoDefaultValue),
+            "Avoid to set default value if build.repository.clean variable is not set on Trigger Yaml UI or in checkout steps yaml config",
+            new EnvironmentKnobSource("AGENT_DISABLE_CLEAN_REPO_DEFAULT_VALUE"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob IgnoreVSTSTaskLib = new Knob(
+            nameof(IgnoreVSTSTaskLib),
+            "Ignores the VSTSTaskLib folder when copying tasks.",
+            new RuntimeKnobSource("AZP_AGENT_IGNORE_VSTSTASKLIB"),
+            new EnvironmentKnobSource("AZP_AGENT_IGNORE_VSTSTASKLIB"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob FailJobWhenAgentDies = new Knob(
+            nameof(FailJobWhenAgentDies),
+            "Mark the Job as Failed instead of Canceled when the Agent dies due to User Cancellation or Shutdown",
+            new RuntimeKnobSource("FAIL_JOB_WHEN_AGENT_DIES"),
+            new EnvironmentKnobSource("FAIL_JOB_WHEN_AGENT_DIES"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AllowWorkDirectoryRepositories = new Knob(
+            nameof(AllowWorkDirectoryRepositories),
+            "Allows repositories to be checked out below work directory level on self hosted agents.",
+            new RuntimeKnobSource("AZP_AGENT_ALLOW_WORK_DIRECTORY_REPOSITORIES"),
+            new EnvironmentKnobSource("AZP_AGENT_ALLOW_WORK_DIRECTORY_REPOSITORIES"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob CheckForTaskDeprecation = new Knob(
+            nameof(CheckForTaskDeprecation),
+            "If true, the agent will check in the 'Initialize job' step each task used in the job for task deprecation.",
+            new RuntimeKnobSource("AZP_AGENT_CHECK_FOR_TASK_DEPRECATION"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob CheckIfTaskNodeRunnerIsDeprecated246 = new Knob(
+            nameof(CheckIfTaskNodeRunnerIsDeprecated246),
+            "If true, the agent will check in the 'Initialize job' step each task used in the job if this task has node handlers, and all of them are deprecated.",
+            new RuntimeKnobSource("AZP_AGENT_CHECK_IF_TASK_NODE_RUNNER_IS_DEPRECATED_246"),
+            new PipelineFeatureSource("CheckIfTaskNodeRunnerIsDeprecated246"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseNode20ToStartContainer = new Knob(
+            nameof(UseNode20ToStartContainer),
+            "If true, the agent will use Node 20 to start docker container when executing container job and the container platform is the same as the host platform.",
+            new RuntimeKnobSource("AZP_AGENT_USE_NODE20_TO_START_CONTAINER"),
+            new PipelineFeatureSource("UseNode20ToStartContainer"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob EnableNewSecretMasker = new Knob(
+            nameof(EnableNewSecretMasker),
+            "If true, the agent will use new SecretMasker with additional filters & performance enhancements",
+            new EnvironmentKnobSource("AZP_ENABLE_NEW_SECRET_MASKER"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AddDockerInitOption = new Knob(
+            nameof(AddDockerInitOption),
+            "If true, the agent will create docker container with the --init option.",
+            new RuntimeKnobSource("AZP_AGENT_DOCKER_INIT_OPTION"),
+            new EnvironmentKnobSource("AZP_AGENT_DOCKER_INIT_OPTION"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob LogTaskNameInUserAgent = new Knob(
+            nameof(LogTaskNameInUserAgent),
+            "If true, agent will log the task name in user agent.",
+            new RuntimeKnobSource("AZP_AGENT_LOG_TASKNAME_IN_USERAGENT"),
+            new EnvironmentKnobSource("AZP_AGENT_LOG_TASKNAME_IN_USERAGENT"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseFetchFilterInCheckoutTask = new Knob(
+            nameof(UseFetchFilterInCheckoutTask),
+            "If true, agent will use fetch filter in checkout task.",
+            new RuntimeKnobSource("AGENT_USE_FETCH_FILTER_IN_CHECKOUT_TASK"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob StoreAgentKeyInCSPContainer = new Knob(
+            nameof(StoreAgentKeyInCSPContainer),
+            "Store agent key in named container (Windows).",
+            new EnvironmentKnobSource("STORE_AGENT_KEY_IN_CSP_CONTAINER"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AgentKeyUseCng = new Knob(
+            nameof(AgentKeyUseCng),
+            "Use CNG API to store agent key.  Note: Uses Private User Storage",
+            new EnvironmentKnobSource("AGENT_KEY_USE_CNG"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob RsaKeyGetConfigFromFF = new Knob(
+            nameof(RsaKeyGetConfigFromFF),
+            "Get config from FF.",
+            new EnvironmentKnobSource("RSAKEYGETCONFIGFROMFF"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob DisableResourceUtilizationWarnings = new Knob(
+            nameof(DisableResourceUtilizationWarnings),
+            "If true, agent will not throw warnings related to high resource utilization",
+            new RuntimeKnobSource("DISABLE_RESOURCE_UTILIZATION_WARNINGS"),
+            new EnvironmentKnobSource("DISABLE_RESOURCE_UTILIZATION_WARNINGS"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob Rosetta2Warning = new Knob(
+            nameof(Rosetta2Warning),
+            "Log warning when X64 Agent is used on a Apple Silicon device.",
+            new RuntimeKnobSource("ROSETTA2_WARNING"),
+            new EnvironmentKnobSource("ROSETTA2_WARNING"),
+            new PipelineFeatureSource("Rosetta2Warning"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob CheckPsModulesLocations = new Knob(
+            nameof(CheckPsModulesLocations),
+            "Checks if the PSModulePath environment variable contains locations specific to PowerShell Core.",
+            new EnvironmentKnobSource("AZP_AGENT_CHECK_PSMODULES_LOCATIONS"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseDockerStdinPasswordOnWindows = new Knob(
+            nameof(UseDockerStdinPasswordOnWindows),
+            "If true, use --password-stdin for docker login on Windows.",
+            new RuntimeKnobSource("AZP_AGENT_USE_DOCKER_STDIN_PASSWORD_WINDOWS"),
+            new PipelineFeatureSource("UseDockerStdinPasswordOnWindows"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob Net8UnsupportedOsWarning = new Knob(
+            nameof(Net8UnsupportedOsWarning),
+            "Show warning message on the OS which is not supported by .NET 8",
+            new PipelineFeatureSource("Net8UnsupportedOsWarning"),
+            new BuiltInDefaultKnobSource("true"));
+
+        public static readonly Knob UsePSScriptWrapper = new Knob(
+            nameof(UsePSScriptWrapper),
+            "Use PowerShell script wrapper to handle PowerShell ConstrainedLanguage mode.",
+            new PipelineFeatureSource("UsePSScriptWrapper"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob AddForceCredentialsToGitCheckout = new Knob(
+            nameof(AddForceCredentialsToGitCheckout),
+            "If true, the credentials will be forcibly added to the Git checkout command.",
+            new RuntimeKnobSource("ADD_FORCE_CREDENTIALS_TO_GIT_CHECKOUT"),
+            new PipelineFeatureSource(nameof(AddForceCredentialsToGitCheckout)),
+            new BuiltInDefaultKnobSource("false"));
+      
+        public static readonly Knob InstallLegacyTfExe = new Knob(
+            nameof(InstallLegacyTfExe),
+            "If true, the agent will install the legacy versions of TF, vstsom and vstshost",
+            new RuntimeKnobSource("AGENT_INSTALL_LEGACY_TF_EXE"),
+            new EnvironmentKnobSource("AGENT_INSTALL_LEGACY_TF_EXE"),
+            new PipelineFeatureSource("InstallLegacyTfExe"),
+            new BuiltInDefaultKnobSource("false"));
+
+        public static readonly Knob UseSparseCheckoutInCheckoutTask = new Knob(
+            nameof(UseSparseCheckoutInCheckoutTask),
+            "If true, agent will use sparse checkout in checkout task.",
+            new RuntimeKnobSource("AGENT_USE_SPARSE_CHECKOUT_IN_CHECKOUT_TASK"),
+            new BuiltInDefaultKnobSource("false"));
     }
 }

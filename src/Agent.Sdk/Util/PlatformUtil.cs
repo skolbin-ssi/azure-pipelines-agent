@@ -4,12 +4,12 @@
 using System;
 using System.IO;
 using System.Linq;
-using System.Net;
-using System.Net.Http;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Xml.Linq;
 using Agent.Sdk.Knob;
@@ -24,11 +24,12 @@ namespace Agent.Sdk
     public static class PlatformUtil
     {
         private static UtilKnobValueContext _knobContext = UtilKnobValueContext.Instance();
-        private static OperatingSystem[] net6SupportedSystems;
-        private static HttpClient httpClient = new HttpClient();
+
+        private static readonly string[] linuxReleaseFilePaths = new string[2] { "/etc/os-release", "/usr/lib/os-release" };
 
         // System.Runtime.InteropServices.OSPlatform is a struct, so it is
         // not suitable for switch statements.
+        // The SupportedOSPlatformGuard is not supported on enums, so call sites using this need to suppress warnings https://github.com/dotnet/runtime/issues/51541
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Naming", "CA1717: Only FlagsAttribute enums should have plural names")]
         public enum OS
         {
@@ -59,19 +60,63 @@ namespace Agent.Sdk
             }
         }
 
-        public static bool RunningOnWindows
+        [SupportedOSPlatformGuard("windows")]
+        public static bool RunningOnWindows => PlatformUtil.HostOS == PlatformUtil.OS.Windows;
+
+        [SupportedOSPlatformGuard("macos")]
+        public static bool RunningOnMacOS => PlatformUtil.HostOS == PlatformUtil.OS.OSX;
+
+        [SupportedOSPlatformGuard("linux")]
+        public static bool RunningOnLinux => PlatformUtil.HostOS == PlatformUtil.OS.Linux;
+
+        public static bool RunningOnAlpine
         {
-            get => PlatformUtil.HostOS == PlatformUtil.OS.Windows;
+            get
+            {
+                if (File.Exists("/etc/alpine-release"))
+                {
+                    return true;
+                }
+
+                return false;
+            }
         }
 
-        public static bool RunningOnMacOS
+        public static async Task<bool> IsRunningOnAppleSiliconAsX64Async(CancellationToken cancellationToken)
         {
-            get => PlatformUtil.HostOS == PlatformUtil.OS.OSX;
+            if (RunningOnMacOS)
+            {
+                try
+                {
+                    // See https://stackoverflow.com/questions/65259300/detect-apple-silicon-from-command-line
+                    var cpuBrand = await ExecuteShCommand("sysctl -n machdep.cpu.brand_string", cancellationToken);
+                    var processArchitecture = await ExecuteShCommand("uname -m", cancellationToken);
+                    return cpuBrand.Contains("Apple") && processArchitecture.Contains("x86_64");
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            return false;
         }
 
-        public static bool RunningOnLinux
+        private static async Task<string> ExecuteShCommand(string command, CancellationToken cancellationToken)
         {
-            get => PlatformUtil.HostOS == PlatformUtil.OS.Linux;
+            using (var invoker = new ProcessInvoker(new NullTraceWriter()))
+            {
+                var stdout = new StringBuilder();
+                invoker.OutputDataReceived += (object sender, ProcessDataReceivedEventArgs e) => stdout.Append(e.Data);
+                await invoker.ExecuteAsync(
+                    string.Empty,
+                    "/bin/sh",
+                    $"-c \"{command}\"",
+                    null,
+                    cancellationToken);
+
+                return stdout.ToString();
+            }
         }
 
         public static bool RunningOnRHEL6
@@ -91,6 +136,7 @@ namespace Agent.Sdk
 
         public static string GetSystemId()
         {
+#pragma warning disable CA1416 // SupportedOSPlatformGuard not honored on enum members
             return PlatformUtil.HostOS switch
             {
                 PlatformUtil.OS.Linux => GetLinuxId(),
@@ -98,10 +144,12 @@ namespace Agent.Sdk
                 PlatformUtil.OS.Windows => GetWindowsId(),
                 _ => null
             };
+#pragma warning restore CA1416
         }
 
         public static SystemVersion GetSystemVersion()
         {
+#pragma warning disable CA1416 // SupportedOSPlatformGuard not honored on enum members
             return PlatformUtil.HostOS switch
             {
                 PlatformUtil.OS.Linux => new SystemVersion(GetLinuxName(), null),
@@ -109,6 +157,7 @@ namespace Agent.Sdk
                 PlatformUtil.OS.Windows => new SystemVersion(GetWindowsName(), GetWindowsVersion()),
                 _ => null
             };
+#pragma warning restore CA1416
         }
 
         private static void DetectRHEL6()
@@ -139,13 +188,27 @@ namespace Agent.Sdk
             }
         }
 
+        private static string GetLinuxReleaseFilePath()
+        {
+            if (RunningOnLinux)
+            {
+                string releaseFilePath = linuxReleaseFilePaths.FirstOrDefault(x => File.Exists(x), null);
+                return releaseFilePath;
+            }
+
+            return null;
+        }
+
         private static string GetLinuxId()
         {
-            if (RunningOnLinux && File.Exists("/etc/os-release"))
+
+            string filePath = GetLinuxReleaseFilePath();
+
+            if (RunningOnLinux && filePath != null)
             {
                 Regex linuxIdRegex = new Regex("^ID\\s*=\\s*\"?(?<id>[0-9a-z._-]+)\"?");
 
-                using (StreamReader reader = new StreamReader("/etc/os-release"))
+                using (StreamReader reader = new StreamReader(filePath))
                 {
                     while (!reader.EndOfStream)
                     {
@@ -165,11 +228,14 @@ namespace Agent.Sdk
 
         private static string GetLinuxName()
         {
-            if (RunningOnLinux && File.Exists("/etc/os-release"))
+
+            string filePath = GetLinuxReleaseFilePath();
+
+            if (RunningOnLinux && filePath != null)
             {
                 Regex linuxVersionIdRegex = new Regex("^VERSION_ID\\s*=\\s*\"?(?<id>[0-9a-z._-]+)\"?");
 
-                using (StreamReader reader = new StreamReader("/etc/os-release"))
+                using (StreamReader reader = new StreamReader(filePath))
                 {
                     while (!reader.EndOfStream)
                     {
@@ -201,6 +267,7 @@ namespace Agent.Sdk
             return null;
         }
 
+        [SupportedOSPlatform("windows")]
         private static string GetWindowsId()
         {
             StringBuilder result = new StringBuilder();
@@ -221,6 +288,7 @@ namespace Agent.Sdk
             return result.ToString();
         }
 
+        [SupportedOSPlatform("windows")]
         private static string GetWindowsName()
         {
             Regex productNameRegex = new Regex("(Windows)(\\sServer)?\\s(?<versionNumber>[\\d.]+)");
@@ -242,6 +310,7 @@ namespace Agent.Sdk
             return null;
         }
 
+        [SupportedOSPlatform("windows")]
         private static string GetWindowsVersion()
         {
             using (RegistryKey key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows NT\CurrentVersion"))
@@ -259,30 +328,15 @@ namespace Agent.Sdk
         private static bool? detectedRHEL6 = null;
         private static object detectedRHEL6lock = new object();
 
-        public static Architecture HostArchitecture
-        {
-            get => RuntimeInformation.OSArchitecture;
-        }
+        public static Architecture HostArchitecture => RuntimeInformation.OSArchitecture;
 
-        public static bool IsX86
-        {
-            get => PlatformUtil.HostArchitecture == Architecture.X86;
-        }
+        public static bool IsX86 => PlatformUtil.HostArchitecture == Architecture.X86;
 
-        public static bool IsX64
-        {
-            get => PlatformUtil.HostArchitecture == Architecture.X64;
-        }
+        public static bool IsX64 => PlatformUtil.HostArchitecture == Architecture.X64;
 
-        public static bool IsArm
-        {
-            get => PlatformUtil.HostArchitecture == Architecture.Arm;
-        }
+        public static bool IsArm => PlatformUtil.HostArchitecture == Architecture.Arm;
 
-        public static bool IsArm64
-        {
-            get => PlatformUtil.HostArchitecture == Architecture.Arm64;
-        }
+        public static bool IsArm64 => PlatformUtil.HostArchitecture == Architecture.Arm64;
 
         public static bool BuiltOnX86
         {
@@ -312,52 +366,23 @@ namespace Agent.Sdk
             get => AgentKnobs.UseLegacyHttpHandler.GetValue(_knobContext).AsBoolean();
         }
 
-        private async static Task<OperatingSystem[]> GetNet6SupportedSystems()
+        public static async Task<bool> IsNetVersionSupported(string netVersion)
         {
-            string serverFileUrl = "https://raw.githubusercontent.com/microsoft/azure-pipelines-agent/master/src/Agent.Listener/net6.json";
-            string supportOSfilePath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "net6.json");
-            string supportOSfileContent;
+            string supportOSfilePath = Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), $"{netVersion}.json");
 
-            if (!File.Exists(supportOSfilePath) || File.GetLastWriteTimeUtc(supportOSfilePath) < DateTime.UtcNow.AddHours(-1))
+            if (!File.Exists(supportOSfilePath))
             {
-                HttpResponseMessage response = await httpClient.GetAsync(serverFileUrl);
-                if (!response.IsSuccessStatusCode)
-                {
-                    throw new Exception($"Getting file \"net6.json\" from server failed. Status code: {response.StatusCode}");
-                }
-                supportOSfileContent = await response.Content.ReadAsStringAsync();
-                await File.WriteAllTextAsync(supportOSfilePath, supportOSfileContent);
-            }
-            else
-            {
-                if (net6SupportedSystems != null)
-                {
-                    return net6SupportedSystems;
-                }
-
-                supportOSfileContent = await File.ReadAllTextAsync(supportOSfilePath);
+                throw new FileNotFoundException($"File with list of systems supporting {netVersion} is absent", supportOSfilePath);
             }
 
-            net6SupportedSystems = JsonConvert.DeserializeObject<OperatingSystem[]>(supportOSfileContent);
-            return net6SupportedSystems;
-        }
-
-        public async static Task<bool> IsNet6Supported()
-        {
-            OperatingSystem[] net6SupportedSystems = await GetNet6SupportedSystems();
+            string supportOSfileContent = await File.ReadAllTextAsync(supportOSfilePath);
+            OperatingSystem[] supportedSystems = JsonConvert.DeserializeObject<OperatingSystem[]>(supportOSfileContent);
 
             string systemId = PlatformUtil.GetSystemId();
             SystemVersion systemVersion = PlatformUtil.GetSystemVersion();
-            return net6SupportedSystems.Any((s) => s.Equals(systemId, systemVersion));
+            return supportedSystems.Any(s => s.Equals(systemId, systemVersion));
         }
 
-        public async static Task<bool> DoesSystemPersistsInNet6Whitelist()
-        {
-            OperatingSystem[] net6SupportedSystems = await GetNet6SupportedSystems();
-            string systemId = PlatformUtil.GetSystemId();
-
-            return net6SupportedSystems.Any((s) => s.Equals(systemId));
-        }
         public static bool DetectDockerContainer()
         {
             bool isDockerContainer = false;
@@ -366,6 +391,7 @@ namespace Agent.Sdk
             {
                 if (PlatformUtil.RunningOnWindows)
                 {
+#pragma warning disable CA1416 // SupportedOSPlatform checks not respected in lambda usage
                     // For Windows we check Container Execution Agent Service (cexecsvc) existence
                     var serviceName = "cexecsvc";
                     ServiceController[] scServices = ServiceController.GetServices();
@@ -373,6 +399,7 @@ namespace Agent.Sdk
                     {
                         isDockerContainer = true;
                     }
+#pragma warning restore CA1416
                 }
                 else
                 {
@@ -384,7 +411,7 @@ namespace Agent.Sdk
                     }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Logging exception will be handled by JobRunner
                 throw;
@@ -404,7 +431,7 @@ namespace Agent.Sdk
                 if (metadataProvider.HasMetadata())
                     isAzureVM = true;
             }
-            catch (Exception ex)
+            catch (Exception)
             {
                 // Logging exception will be handled by JobRunner
                 throw;
@@ -426,7 +453,7 @@ namespace Agent.Sdk
         {
             if (name == null && version == null)
             {
-                throw new Exception("You need to provide at least one not-nullable parameter");
+                throw new ArgumentNullException("You need to provide at least one not-nullable parameter");
             }
 
             if (name != null)
@@ -496,7 +523,7 @@ namespace Agent.Sdk
 
             if (!parsedVersionRegexMatch.Success)
             {
-                throw new Exception($"String {version} can't be parsed");
+                throw new FormatException($"String {version} can't be parsed");
             }
 
             string versionString = string.Format(

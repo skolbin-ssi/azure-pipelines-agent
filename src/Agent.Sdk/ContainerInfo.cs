@@ -83,6 +83,7 @@ namespace Agent.Sdk
         public string ContainerName { get; set; }
         public string ContainerCommand { get; set; }
         public string CustomNodePath { get; set; }
+        public string ResultNodePath { get; set; }
         public Guid ContainerRegistryEndpoint { get; private set; }
         public string ContainerCreateOptions { get; set; }
         public bool SkipContainerImagePull { get; private set; }
@@ -90,9 +91,9 @@ namespace Agent.Sdk
         public string CurrentUserId { get; set; }
         public string CurrentGroupName { get; set; }
         public string CurrentGroupId { get; set; }
-
         public bool IsJobContainer { get; set; }
         public bool MapDockerSocket { get; set; }
+        public bool NeedsNode16Redirect { get; set; }
         public PlatformUtil.OS ImageOS
         {
             get

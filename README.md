@@ -39,21 +39,16 @@ Written for .NET Core in C#.
 
 ## Supported Usage
 
-This agent can be used for Azure Pipelines, Azure DevOps Server 2019+, and TFS 2017+.
-It also replaces the Node-based agent for TFS 2015.
+This agent can be used for both Azure Pipelines and Azure DevOps Server (Team Foundation Server).
+Support is extended to all on-premise solutions [based on their lifecycle (including extended support)](https://learn.microsoft.com/lifecycle/products/).
 
-| Scenario | Mac/Linux | Windows | Comment |
-|:-------------:|:-----:|:-----:|:-----:|
-| Azure Pipelines      |  Yes  | Yes   |
-| TFS2015 (onprem)   |  Yes  | No    | Windows use agent with 2015 |
-| TFS2017 (onprem)   |  Yes  | Yes    |  |
-| TFS2018 (onprem)   |  Yes  | Yes    |  |
+The only exception is the Windows version of the agent for TFS 2015 since it is distributed along with a separate Node-based agent.
 
 ## Latest and Pre-release labels for releases
 
 Releases have labels **Latest** and **Pre-release**. Please make a note that the labels mean:
-- **Latest** - release process of the agent version is fully completed and it's available for all users;
-- **Pre-release** - release process of the agent version was started and it's already available for using by part of users.
+- **Latest** - this is the current release of the agent, available to all clients or partially available (in case it is an active release that is currently under deployment).
+- **Pre-release** - Next version, release process of the agent version was started and it's already available for some of the users. And will be available soon for the rest.
 
 Each new version of agent is released for users by groups during several days. And usually it becomes available for all users within 6-8 days after start of release. The release has label "Pre-release" during all these days. So it's expected behavior if specific release is used by builds in pipelines but it's marked as "Pre-release".
 

@@ -9,6 +9,7 @@ using System;
 using System.Linq;
 using System.Net.Sockets;
 using System.Collections.Generic;
+using Agent.Sdk;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -102,7 +103,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     return false;
                 }
 
-                // process logging command in serialize oreder.
+                // process logging command in serialize order.
                 lock (_commandSerializeLock)
                 {
                     try
@@ -128,7 +129,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         if (!(string.Equals(command.Area, "task", StringComparison.OrdinalIgnoreCase) &&
                               string.Equals(command.Event, "debug", StringComparison.OrdinalIgnoreCase)))
                         {
-                            context.Debug($"Processed: {input}");
+                            context.Debug($"Processed: {CommandStringConvertor.Unescape(input, unescapePercents)}");
                         }
                     }
                 }

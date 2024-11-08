@@ -26,6 +26,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests.PipelineCache
         private static readonly string path1;
         private static readonly string path2;
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA5394:Do not use insecure randomness")]
+        [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1810:Initialize all static fields")]
         static FingerprintCreatorTests()
         {
             var r = new Random(0);
@@ -41,7 +43,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Tests.PipelineCache
             File.WriteAllBytes(path1, content1);
             File.WriteAllBytes(path2, content2);
 
-            using (var hasher = new SHA256Managed())
+            using (var hasher = SHA256.Create())
             {
                 hash1 = hasher.ComputeHash(content1);
                 hash2 = hasher.ComputeHash(content2);

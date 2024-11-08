@@ -17,10 +17,14 @@ using System.Threading.Tasks;
 using System.Diagnostics;
 using System.Net.Http;
 using System.Diagnostics.Tracing;
-using Microsoft.TeamFoundation.DistributedTask.Logging;
 using System.Net.Http.Headers;
+using Agent.Sdk.SecretMasking;
 using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using Agent.Sdk.Util;
+using Microsoft.TeamFoundation.DistributedTask.Logging;
+using SecretMasker = Agent.Sdk.SecretMasking.SecretMasker;
+using LegacySecretMasker = Microsoft.TeamFoundation.DistributedTask.Logging.SecretMasker;
+using Agent.Sdk.Util.SecretMasking;
 
 namespace Microsoft.VisualStudio.Services.Agent
 {
@@ -68,8 +72,7 @@ namespace Microsoft.VisualStudio.Services.Agent
         private static int[] _vssHttpCredentialEventIds = new int[] { 11, 13, 14, 15, 16, 17, 18, 20, 21, 22, 27, 29 };
         private readonly ConcurrentDictionary<Type, object> _serviceInstances = new ConcurrentDictionary<Type, object>();
         protected readonly ConcurrentDictionary<Type, Type> ServiceTypes = new ConcurrentDictionary<Type, Type>();
-        SecretMasker _basicSecretMasker = new SecretMasker();
-        private readonly ILoggedSecretMasker _secretMasker;
+        private ILoggedSecretMasker _secretMasker;
         private readonly ProductInfoHeaderValue _userAgent = new ProductInfoHeaderValue($"VstsAgentCore-{BuildConstants.AgentPackage.PackageName}", BuildConstants.AgentPackage.Version);
         private CancellationTokenSource _agentShutdownTokenSource = new CancellationTokenSource();
         private object _perfLock = new object();
@@ -80,6 +83,8 @@ namespace Microsoft.VisualStudio.Services.Agent
         private AssemblyLoadContext _loadContext;
         private IDisposable _httpTraceSubscription;
         private IDisposable _diagListenerSubscription;
+        private LegacySecretMasker _legacySecretMasker = new LegacySecretMasker();
+        private SecretMasker _newSecretMasker = new SecretMasker();
         private StartupType _startupType;
         private string _perfFile;
         private HostType _hostType;
@@ -88,10 +93,11 @@ namespace Microsoft.VisualStudio.Services.Agent
         public ShutdownReason AgentShutdownReason { get; private set; }
         public ILoggedSecretMasker SecretMasker => _secretMasker;
         public ProductInfoHeaderValue UserAgent => _userAgent;
+
         public HostContext(HostType hostType, string logFile = null)
         {
-            _secretMasker = new LoggedSecretMasker(_basicSecretMasker);
-
+            var useNewSecretMasker =  AgentKnobs.EnableNewSecretMasker.GetValue(this).AsBoolean();
+            _secretMasker = useNewSecretMasker ? new LoggedSecretMasker(_newSecretMasker) : new LegacyLoggedSecretMasker(_legacySecretMasker);
             // Validate args.
             if (hostType == HostType.Undefined)
             {
@@ -106,13 +112,6 @@ namespace Microsoft.VisualStudio.Services.Agent
             this.SecretMasker.AddValueEncoder(ValueEncoders.UriDataEscape, $"HostContext_{WellKnownSecretAliases.UriDataEscape}");
             this.SecretMasker.AddValueEncoder(ValueEncoders.BackslashEscape, $"HostContext_{WellKnownSecretAliases.UriDataEscape}");
             this.SecretMasker.AddRegex(AdditionalMaskingRegexes.UrlSecretPattern, $"HostContext_{WellKnownSecretAliases.UrlSecretPattern}");
-            if (AgentKnobs.MaskUsingCredScanRegexes.GetValue(this).AsBoolean())
-            {
-                foreach (var pattern in AdditionalMaskingRegexes.CredScanPatterns)
-                {
-                    this.SecretMasker.AddRegex(pattern, $"HostContext_{WellKnownSecretAliases.CredScanPatterns}");
-                }
-            }
 
             // Create the trace manager.
             if (string.IsNullOrEmpty(logFile))
@@ -197,6 +196,12 @@ namespace Microsoft.VisualStudio.Services.Agent
                         Constants.Path.LegacyPSHostDirectory);
                     break;
 
+                case WellKnownDirectory.LegacyPSHostLegacy:
+                    path = Path.Combine(
+                        GetDirectory(WellKnownDirectory.Externals),
+                        Constants.Path.LegacyPSHostLegacyDirectory);
+                    break;
+
                 case WellKnownDirectory.Root:
                     path = new DirectoryInfo(GetDirectory(WellKnownDirectory.Bin)).Parent.FullName;
                     break;
@@ -207,10 +212,22 @@ namespace Microsoft.VisualStudio.Services.Agent
                         Constants.Path.ServerOMDirectory);
                     break;
 
+                case WellKnownDirectory.ServerOMLegacy:
+                    path = Path.Combine(
+                        GetDirectory(WellKnownDirectory.Externals),
+                        Constants.Path.ServerOMLegacyDirectory);
+                    break;
+
                 case WellKnownDirectory.Tf:
                     path = Path.Combine(
                         GetDirectory(WellKnownDirectory.Externals),
                         Constants.Path.TfDirectory);
+                    break;
+
+                case WellKnownDirectory.TfLegacy:
+                    path = Path.Combine(
+                        GetDirectory(WellKnownDirectory.Externals),
+                        Constants.Path.TfLegacyDirectory);
                     break;
 
                 case WellKnownDirectory.Tee:
@@ -595,8 +612,10 @@ namespace Microsoft.VisualStudio.Services.Agent
                 _trace = null;
                 _httpTrace?.Dispose();
                 _httpTrace = null;
-                _basicSecretMasker?.Dispose();
-                _basicSecretMasker = null;
+                _legacySecretMasker?.Dispose();
+                _legacySecretMasker = null;
+                _newSecretMasker?.Dispose();
+                _newSecretMasker = null;
 
                 _agentShutdownTokenSource?.Dispose();
                 _agentShutdownTokenSource = null;
@@ -740,6 +759,15 @@ namespace Microsoft.VisualStudio.Services.Agent
             }
 
             return clientHandler;
+        }
+
+        public static void AddAdditionalMaskingRegexes(this IHostContext context)
+        {
+            ArgUtil.NotNull(context, nameof(context));
+            foreach (var pattern in AdditionalMaskingRegexes.CredScanPatterns)
+            {
+                context.SecretMasker.AddRegex(pattern, $"HostContext_{WellKnownSecretAliases.CredScanPatterns}");
+            }
         }
     }
 

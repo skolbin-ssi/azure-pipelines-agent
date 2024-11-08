@@ -22,11 +22,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
         private static UtilKnobValueContext _knobContext = UtilKnobValueContext.Instance();
 
         private const string _testUri = "https://microsoft.com/";
+        private const string TaskUserAgentPrefix = "(Task:";
         private static bool? _isCustomServerCertificateValidationSupported;
 
-
-
-        public static void InitializeVssClientSettings(ProductInfoHeaderValue additionalUserAgent, IWebProxy proxy, IVssClientCertificateManager clientCert)
+        public static void InitializeVssClientSettings(ProductInfoHeaderValue additionalUserAgent, IWebProxy proxy, IVssClientCertificateManager clientCert, bool SkipServerCertificateValidation)
         {
             var headerValues = new List<ProductInfoHeaderValue>();
             headerValues.Add(additionalUserAgent);
@@ -49,14 +48,53 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
             }
 
             VssHttpMessageHandler.DefaultWebProxy = proxy;
+
+            if (SkipServerCertificateValidation)
+            {
+                VssClientHttpRequestSettings.Default.ServerCertificateValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
+            }
         }
 
+        public static void PushTaskIntoAgentInfo(string taskName, string taskVersion)
+        {
+            var headerValues = VssClientHttpRequestSettings.Default.UserAgent;
+
+            if (headerValues == null)
+            {
+                headerValues = new List<ProductInfoHeaderValue>();
+            }
+
+            headerValues.Add(new ProductInfoHeaderValue(string.Concat(TaskUserAgentPrefix, taskName , "-" , taskVersion, ")")));
+
+            VssClientHttpRequestSettings.Default.UserAgent = headerValues;
+        }
+
+        public static void RemoveTaskFromAgentInfo()
+        {
+            var headerValues = VssClientHttpRequestSettings.Default.UserAgent;
+            if (headerValues == null)
+            {
+                return;
+            }
+
+            foreach (var value in headerValues)
+            {
+                if (value.Comment != null && value.Comment.StartsWith(TaskUserAgentPrefix))
+                {
+                    headerValues.Remove(value);
+                    break;
+                }
+            }
+
+            VssClientHttpRequestSettings.Default.UserAgent = headerValues;
+        }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA2000:Dispose objects before losing scope", MessageId = "connection")]
         public static VssConnection CreateConnection(
             Uri serverUri,
             VssCredentials credentials,
             ITraceWriter trace,
+            bool skipServerCertificateValidation = false,
             IEnumerable<DelegatingHandler> additionalDelegatingHandler = null,
             TimeSpan? timeout = null)
         {
@@ -82,7 +120,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Util
             // Setting `ServerCertificateCustomValidation` to able to capture SSL data for diagnostic
             if (trace != null && IsCustomServerCertificateValidationSupported(trace))
             {
-                SslUtil sslUtil = new SslUtil(trace);
+                SslUtil sslUtil = new SslUtil(trace, skipServerCertificateValidation);
                 settings.ServerCertificateValidationCallback = sslUtil.RequestStatusCustomValidation;
             }
 

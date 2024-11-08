@@ -13,6 +13,7 @@ using Agent.Sdk.Util;
 using CommandLine;
 using Newtonsoft.Json.Converters;
 using Newtonsoft.Json;
+using System.Runtime.Versioning;
 
 namespace Microsoft.VisualStudio.Services.Agent.Listener
 {
@@ -29,6 +30,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             typeof(RunAgent),
             typeof(RemoveAgent),
             typeof(WarmupAgent),
+            typeof(ReAuthAgent),
         };
 
         private string[] verbCommands = new string[]
@@ -37,6 +39,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             Constants.Agent.CommandLine.Commands.Remove,
             Constants.Agent.CommandLine.Commands.Run,
             Constants.Agent.CommandLine.Commands.Warmup,
+            Constants.Agent.CommandLine.Commands.ReAuth,
         };
 
 
@@ -45,6 +48,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
         private RemoveAgent Remove { get; set; }
         private RunAgent Run { get; set; }
         private WarmupAgent Warmup { get; set; }
+        private ReAuthAgent ReAuth { get; set; }
 
         public IEnumerable<Error> ParseErrors { get; set; }
 
@@ -71,12 +75,23 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                 context.SecretMasker.AddValue(Configure.SslClientCert, WellKnownSecretAliases.ConfigureSslClientCert);
                 context.SecretMasker.AddValue(Configure.Token, WellKnownSecretAliases.ConfigureToken);
                 context.SecretMasker.AddValue(Configure.WindowsLogonPassword, WellKnownSecretAliases.ConfigureWindowsLogonPassword);
+                context.SecretMasker.AddValue(Configure.TenantId, WellKnownSecretAliases.ConfigureTenantId);
+                context.SecretMasker.AddValue(Configure.ClientId, WellKnownSecretAliases.ConfigureClientId);
+                context.SecretMasker.AddValue(Configure.ClientSecret, WellKnownSecretAliases.ConfigureClientSecret);
             }
 
             if (Remove != null)
             {
                 context.SecretMasker.AddValue(Remove.Password, WellKnownSecretAliases.RemovePassword);
                 context.SecretMasker.AddValue(Remove.Token, WellKnownSecretAliases.RemoveToken);
+                context.SecretMasker.AddValue(Remove.TenantId, WellKnownSecretAliases.RemoveTenantId);
+                context.SecretMasker.AddValue(Remove.ClientId, WellKnownSecretAliases.RemoveClientId);
+                context.SecretMasker.AddValue(Remove.ClientSecret, WellKnownSecretAliases.RemoveClientSecret);
+            }
+
+            if (ReAuth != null)
+            {
+                context.SecretMasker.AddValue(ReAuth.Token, WellKnownSecretAliases.RemoveToken);
             }
 
             PrintArguments();
@@ -205,6 +220,37 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                 description: StringUtil.Loc("LaunchBrowser"),
                 defaultValue: true);
         }
+
+        public string GetClientId()
+        {
+            return GetArgOrPrompt(
+                argValue: GetConfigureOrRemoveBase()?.ClientId,
+                name: Constants.Agent.CommandLine.Args.ClientId,
+                description: StringUtil.Loc("ClientId"),
+                defaultValue: string.Empty,
+                validator: Validators.NonEmptyValidator);
+        }
+
+        public string GetClientSecret()
+        {
+            return GetArgOrPrompt(
+                argValue: GetConfigureOrRemoveBase()?.ClientSecret,
+                name: Constants.Agent.CommandLine.Args.ClientSecret,
+                description: StringUtil.Loc("ClientSecret"),
+                defaultValue: string.Empty,
+                validator: Validators.NonEmptyValidator);
+        }
+
+        public string GetTenantId()
+        {
+            return GetArgOrPrompt(
+                argValue: GetConfigureOrRemoveBase()?.TenantId,
+                name: Constants.Agent.CommandLine.Args.TenantId,
+                description: StringUtil.Loc("TenantId"),
+                defaultValue: string.Empty,
+                validator: Validators.NonEmptyValidator);
+        }
+
         /// <summary>
         /// Returns EnableServiceSidTypeUnrestricted flag or prompts user to set it up
         /// </summary>
@@ -399,6 +445,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                 validator: Validators.NonEmptyValidator);
         }
 
+        [SupportedOSPlatform("windows")]
         public string GetWindowsLogonAccount(string defaultValue, string descriptionMsg)
         {
             return GetArgOrPrompt(
@@ -511,6 +558,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                    TestFlag(Run?.RunOnce, Constants.Agent.CommandLine.Flags.Once);
         }
 
+        public bool GetDebugMode()
+        {
+            return TestFlag(Run?.DebugMode, Constants.Agent.CommandLine.Flags.DebugMode);
+        }
+
         public bool GetDeploymentPool()
         {
             return TestFlag(Configure?.DeploymentPool, Constants.Agent.CommandLine.Flags.DeploymentPool);
@@ -530,6 +582,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
         public bool GetDisableLogUploads()
         {
             return TestFlag(Configure?.DisableLogUploads, Constants.Agent.CommandLine.Flags.DisableLogUploads);
+        }
+
+        public bool GetReStreamLogsToFiles()
+        {
+            return TestFlag(Configure?.ReStreamLogsToFiles, Constants.Agent.CommandLine.Flags.ReStreamLogsToFiles);
         }
 
         public bool Unattended()
@@ -560,7 +617,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             if ((Configure?.Version == true) ||
                 (Remove?.Version == true) ||
                 (Run?.Version == true) ||
-                (Warmup?.Version == true))
+                (Warmup?.Version == true) ||
+                (ReAuth?.Version == true))
             {
                 return true;
             }
@@ -573,7 +631,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             if ((Configure?.Help == true) ||
                 (Remove?.Help == true) ||
                 (Run?.Help == true) ||
-                (Warmup?.Help == true))
+                (Warmup?.Help == true) ||
+                (ReAuth?.Help == true))
             {
                 return true;
             }
@@ -620,6 +679,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
 
             return false;
         }
+
+        public bool IsReAuthCommand() => ReAuth != null;
 
 
         //
@@ -790,6 +851,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
                         {
                             Warmup = x;
                         })
+                    .WithParsed<ReAuthAgent>(
+                        x =>
+                        {
+                            ReAuth = x;
+                        })
                     .WithNotParsed(
                         errors =>
                         {
@@ -808,6 +874,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             if (Remove != null)
             {
                 _trace.Info(string.Concat(nameof(Remove), " ", ObjectAsJson(Remove)));
+            }
+
+            if (ReAuth != null)
+            {
+                _trace.Info(string.Concat(nameof(ReAuth), " ", ObjectAsJson(ReAuth)));
             }
 
             if (Warmup != null)
@@ -838,6 +909,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener
             if (Remove != null)
             {
                 return Remove as ConfigureOrRemoveBase;
+            }
+
+            if (ReAuth != null)
+            {
+                return ReAuth as ConfigureOrRemoveBase;
             }
 
             return null;

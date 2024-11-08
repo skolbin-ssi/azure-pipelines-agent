@@ -18,7 +18,12 @@ using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 
 namespace Agent.Plugins.Repository
 {
-    public class GitCliManager
+    public interface IGitCliManager
+    {
+        Task<int> GitConfig(AgentTaskPluginExecutionContext context, string repositoryPath, string configKey, string configValue);
+    }
+
+    public class GitCliManager : IGitCliManager
     {
         private static Encoding _encoding
         {
@@ -77,18 +82,54 @@ namespace Agent.Plugins.Repository
             return gitLfsVersion >= requiredVersion;
         }
 
+        public (string gitPath, string gitLfsPath) GetInternalGitPaths(AgentTaskPluginExecutionContext context)
+        {
+            string agentHomeDir = context.Variables.GetValueOrDefault("agent.homedirectory")?.Value;
+            ArgUtil.NotNullOrEmpty(agentHomeDir, nameof(agentHomeDir));
+
+            string gitPath = null;
+
+            if (AgentKnobs.UseGit2_39_4.GetValue(context).AsBoolean())
+            {
+                gitPath = Path.Combine(agentHomeDir, "externals", "git-2.39.4", "cmd", $"git.exe");
+            }
+            else if (AgentKnobs.UseGit2_42_0_2.GetValue(context).AsBoolean())
+            {
+                gitPath = Path.Combine(agentHomeDir, "externals", "git-2.42.0.2", "cmd", $"git.exe");
+            }
+
+            if (gitPath is null || !File.Exists(gitPath))
+            {
+                context.Debug("gitPath is null or does not exist. Falling back to default git path.");
+                gitPath = Path.Combine(agentHomeDir, "externals", "git", "cmd", $"git.exe");
+            }
+
+            string gitLfsPath;
+
+            if (PlatformUtil.BuiltOnX86)
+            {
+                gitLfsPath = Path.Combine(agentHomeDir, "externals", "git", "mingw32", "bin", "git-lfs.exe");
+            }
+            else
+            {
+                gitLfsPath = Path.Combine(agentHomeDir, "externals", "git", "mingw64", "bin", "git-lfs.exe");
+            }
+
+            return (gitPath, gitLfsPath);
+        }
+
         public virtual async Task LoadGitExecutionInfo(AgentTaskPluginExecutionContext context, bool useBuiltInGit)
         {
             // There is no built-in git for OSX/Linux
             gitPath = null;
+            gitLfsPath = null;
 
             // Resolve the location of git.
             if (useBuiltInGit && PlatformUtil.RunningOnWindows)
             {
-                string agentHomeDir = context.Variables.GetValueOrDefault("agent.homedirectory")?.Value;
-                ArgUtil.NotNullOrEmpty(agentHomeDir, nameof(agentHomeDir));
-                gitPath = Path.Combine(agentHomeDir, "externals", "git", "cmd", $"git.exe");
-                gitLfsPath = Path.Combine(agentHomeDir, "externals", "git", PlatformUtil.BuiltOnX86 ? "mingw32" : "mingw64", "bin", "git-lfs.exe");
+                context.Debug("Git paths are resolving from internal dependencies");
+
+                (gitPath, gitLfsPath) = GetInternalGitPaths(context);
 
                 // Prepend the PATH.
                 context.Output(StringUtil.Loc("Prepending0WithDirectoryContaining1", "Path", Path.GetFileName(gitPath)));
@@ -154,7 +195,7 @@ namespace Agent.Plugins.Repository
         }
 
         // git fetch --tags --prune --progress --no-recurse-submodules [--depth=15] origin [+refs/pull/*:refs/remote/pull/*]
-        public async Task<int> GitFetch(AgentTaskPluginExecutionContext context, string repositoryPath, string remoteName, int fetchDepth, bool fetchTags, List<string> refSpec, string additionalCommandLine, CancellationToken cancellationToken)
+        public async Task<int> GitFetch(AgentTaskPluginExecutionContext context, string repositoryPath, string remoteName, int fetchDepth, IEnumerable<string> filters, bool fetchTags, List<string> refSpec, string additionalCommandLine, CancellationToken cancellationToken)
         {
             context.Debug($"Fetch git repository at: {repositoryPath} remote: {remoteName}.");
             if (refSpec != null && refSpec.Count > 0)
@@ -193,7 +234,7 @@ namespace Agent.Plugins.Repository
             string depth = fetchDepth > 0 ? $"--depth={fetchDepth}" : (File.Exists(Path.Combine(repositoryPath, ".git", "shallow")) ? "--unshallow" : string.Empty);
 
             //define options for fetch
-            string options = $"{forceTag} {tags} --prune {pruneTags} {progress} --no-recurse-submodules {remoteName} {depth} {string.Join(" ", refSpec)}";
+            string options = $"{forceTag} {tags} --prune {pruneTags} {progress} --no-recurse-submodules {remoteName} {depth} {string.Join(" ", filters.Select(filter => "--filter=" + filter))} {string.Join(" ", refSpec)}";
             int retryCount = 0;
             int fetchExitCode = 0;
             while (retryCount < 3)
@@ -213,6 +254,8 @@ namespace Agent.Plugins.Repository
                     { "RefSpec", string.Join(" ", refSpec) },
                     { "RemoteName", remoteName },
                     { "FetchDepth", $"{fetchDepth}" },
+                    { "FetchFilter", $"{String.Join(" ", filters)}" },
+                    { "FetchTags", $"{fetchTags}" },
                     { "ExitCode", $"{fetchExitCode}" },
                     { "Options", options }
                 });
@@ -277,8 +320,42 @@ namespace Agent.Plugins.Repository
             return fetchExitCode;
         }
 
+        // git sparse-checkout
+        public async Task<int> GitSparseCheckout(AgentTaskPluginExecutionContext context, string repositoryPath, string directories, string patterns, CancellationToken cancellationToken)
+        {
+            context.Debug($"Sparse checkout");
+
+            bool useConeMode = !string.IsNullOrWhiteSpace(directories);
+            string options = useConeMode ? "--cone" : "--no-cone";
+
+            context.PublishTelemetry(area: "AzurePipelinesAgent", feature: "GitSparseCheckout", properties: new Dictionary<string, string>
+            {
+                { "Mode", useConeMode ? "cone" : "non-cone" },
+                { "Patterns", useConeMode ? directories : patterns }
+            });
+
+            int exitCode_sparseCheckoutInit = await ExecuteGitCommandAsync(context, repositoryPath, "sparse-checkout init", options, cancellationToken);
+
+            if (exitCode_sparseCheckoutInit != 0)
+            {
+                return exitCode_sparseCheckoutInit;
+            }
+            else
+            {
+                return await ExecuteGitCommandAsync(context, repositoryPath, "sparse-checkout set", useConeMode ? directories : patterns, cancellationToken);
+            }
+        }
+
+        // git sparse-checkout disable
+        public async Task<int> GitSparseCheckoutDisable(AgentTaskPluginExecutionContext context, string repositoryPath, CancellationToken cancellationToken)
+        {
+            context.Debug($"Sparse checkout disable");
+
+            return await ExecuteGitCommandAsync(context, repositoryPath, "sparse-checkout disable", string.Empty, cancellationToken);
+        }
+
         // git checkout -f --progress <commitId/branch>
-        public async Task<int> GitCheckout(AgentTaskPluginExecutionContext context, string repositoryPath, string committishOrBranchSpec, CancellationToken cancellationToken)
+        public async Task<int> GitCheckout(AgentTaskPluginExecutionContext context, string repositoryPath, string committishOrBranchSpec, string additionalCommandLine, CancellationToken cancellationToken)
         {
             context.Debug($"Checkout {committishOrBranchSpec}.");
 
@@ -293,7 +370,7 @@ namespace Agent.Plugins.Repository
                 options = StringUtil.Format("--force {0}", committishOrBranchSpec);
             }
 
-            return await ExecuteGitCommandAsync(context, repositoryPath, "checkout", options, cancellationToken);
+            return await ExecuteGitCommandAsync(context, repositoryPath, "checkout", options, additionalCommandLine, cancellationToken);
         }
 
         // git clean -ffdx

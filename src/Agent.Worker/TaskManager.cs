@@ -1,20 +1,31 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-using Agent.Sdk;
-using Agent.Sdk.Knob;
-using Microsoft.TeamFoundation.DistributedTask.WebApi;
-using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
-using Microsoft.VisualStudio.Services.Agent.Util;
-using Newtonsoft.Json;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
+using System.Net.Http;
+using System.Net.Sockets;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+
+using Agent.Sdk;
+using Agent.Sdk.Knob;
+using Agent.Sdk.Util;
+
+using Microsoft.TeamFoundation.DistributedTask.WebApi;
+using Microsoft.VisualStudio.Services.Agent.Util;
+using Microsoft.VisualStudio.Services.Agent.Worker.Handlers;
+using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
 using Microsoft.VisualStudio.Services.Common;
+
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
+
+using Pipelines = Microsoft.TeamFoundation.DistributedTask.Pipelines;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -22,7 +33,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
     public interface ITaskManager : IAgentService
     {
         Task DownloadAsync(IExecutionContext executionContext, IEnumerable<Pipelines.JobStep> steps);
-
         Definition Load(Pipelines.TaskStep task);
 
         /// <summary>
@@ -66,6 +76,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 return;
             }
 
+            HashSet<Guid> exceptionList = GetTaskExceptionSet();
+
             foreach (var task in uniqueTasks.Select(x => x.Reference))
             {
                 if (task.Id == Pipelines.PipelineConstants.CheckoutTask.Id && task.Version == Pipelines.PipelineConstants.CheckoutTask.Version)
@@ -73,7 +85,21 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     Trace.Info("Skip download checkout task.");
                     continue;
                 }
+
                 await DownloadAsync(executionContext, task);
+
+                if (AgentKnobs.CheckForTaskDeprecation.GetValue(executionContext).AsBoolean())
+                {
+                    CheckForTaskDeprecation(executionContext, task);
+                }
+
+                if (AgentKnobs.CheckIfTaskNodeRunnerIsDeprecated246.GetValue(executionContext).AsBoolean())
+                {
+                    if (!exceptionList.Contains(task.Id))
+                    {
+                        CheckIfTaskNodeRunnerIsDeprecated(executionContext, task);
+                    }
+                }
             }
         }
 
@@ -103,14 +129,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 return checkoutTask;
             }
 
-            // Initialize the definition wrapper object.
-            var definition = new Definition() { Directory = GetDirectory(task.Reference), ZipPath = GetTaskZipPath(task.Reference) };
-
-            // Deserialize the JSON.
-            string file = Path.Combine(definition.Directory, Constants.Path.TaskJsonFile);
-            Trace.Info($"Loading task definition '{file}'.");
-            string json = File.ReadAllText(file);
-            definition.Data = JsonConvert.DeserializeObject<DefinitionData>(json);
+            var definition = GetTaskDefiniton(task);
 
             // Replace the macros within the handler data sections.
             foreach (HandlerData handlerData in (definition.Data?.Execution?.All as IEnumerable<HandlerData> ?? new HandlerData[0]))
@@ -308,6 +327,136 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
         }
 
+        private void CheckForTaskDeprecation(IExecutionContext executionContext, Pipelines.TaskStepDefinitionReference task)
+        {
+            JObject taskJson = GetTaskJson(task);
+            var deprecated = taskJson["deprecated"];
+
+            if (deprecated != null && deprecated.Value<bool>())
+            {
+                string friendlyName = taskJson["friendlyName"].Value<string>();
+                int majorVersion = new Version(task.Version).Major;
+                string commonDeprecationMessage = StringUtil.Loc("DeprecationMessage", friendlyName, majorVersion, task.Name);
+                var removalDate = taskJson["removalDate"];
+
+                if (removalDate != null)
+                {
+                    string whitespace = " ";
+                    string removalDateString = removalDate.Value<DateTime>().ToString("MMMM d, yyyy");
+                    commonDeprecationMessage += whitespace + StringUtil.Loc("DeprecationMessageRemovalDate", removalDateString);
+                    var helpUrl = taskJson["helpUrl"];
+
+                    if (helpUrl != null)
+                    {
+                        string helpUrlString = helpUrl.Value<string>();
+                        string category = taskJson["category"].Value<string>().ToLower();
+                        string urlPrefix = $"https://docs.microsoft.com/azure/devops/pipelines/tasks/{category}/";
+
+                        if (helpUrlString.StartsWith(urlPrefix))
+                        {
+                            string versionHelpUrl = $"{helpUrlString}-v{majorVersion}".Replace(urlPrefix, $"https://learn.microsoft.com/azure/devops/pipelines/tasks/reference/");
+                            commonDeprecationMessage += whitespace + StringUtil.Loc("DeprecationMessageHelpUrl", versionHelpUrl);
+                        }
+                    }
+                }
+
+                executionContext.Warning(commonDeprecationMessage);
+
+                var tailoredDeprecationMessage = taskJson["deprecationMessage"];
+
+                if (tailoredDeprecationMessage != null)
+                {
+                    executionContext.Warning(tailoredDeprecationMessage.ToString());
+                }
+            }
+        }
+
+        private void CheckIfTaskNodeRunnerIsDeprecated(IExecutionContext executionContext, Pipelines.TaskStepDefinitionReference task)
+        {
+            string[] deprecatedNodeRunners = { "Node", "Node10" };
+            string[] approvedNodeRunners = { "Node16", "Node20_1" }; // Node runners which are not considered as deprecated
+            string[] executionSteps = { "prejobexecution", "execution", "postjobexecution" };
+
+            JObject taskJson = GetTaskJson(task);
+
+            var taskRunners = new HashSet<string>();
+
+            foreach (var step in executionSteps)
+            {
+                var runners = taskJson.GetValueOrDefault(step);
+                if (runners == null || runners is not JObject)
+                {
+                    continue;
+                }
+
+                var runnerNames = ((JObject)runners).Properties().Select(p => p.Name);
+
+                if (runnerNames.Intersect(approvedNodeRunners).Any())
+                {
+                    continue; // Agent never uses deprecated Node runners if there are approved Node runners
+                }
+
+                taskRunners.Add(runnerNames);
+            }
+
+            List<string> taskNodeRunners = new(); // If we are here and task has Node runners, all of them are deprecated
+
+            foreach (string runner in deprecatedNodeRunners)
+            {
+                if (taskRunners.Contains(runner))
+                {
+                    switch (runner)
+                    {
+                        case "Node":
+                            taskNodeRunners.Add("6"); // Just "Node" is Node version 6
+                            break;
+                        default:
+                            taskNodeRunners.Add(runner[4..]); // Postfix after "Node"
+                            break;
+                    }
+                }
+            }
+
+            if (taskNodeRunners.Count > 0) // Tasks may have only PowerShell runners and don't have Node runners at all
+            {
+                string friendlyName = taskJson["friendlyName"].Value<string>();
+                int majorVersion = new Version(task.Version).Major;
+                executionContext.Warning(StringUtil.Loc("DeprecatedNodeRunner", friendlyName, majorVersion, task.Name, taskNodeRunners.Last()));
+            }
+        }
+
+        /// <summary> 
+        /// This method provides a set of in-the-box pipeline tasks for which we don't want to display Node deprecation warnings. 
+        /// </summary>
+        /// <returns> Set of tasks ID </returns>
+        private HashSet<Guid> GetTaskExceptionSet()
+        {
+            string exceptionListFile = HostContext.GetConfigFile(WellKnownConfigFile.TaskExceptionList);
+            var exceptionList = new List<Guid>();
+
+            if (File.Exists(exceptionListFile))
+            {
+                try
+                {
+                    exceptionList = IOUtil.LoadObject<List<Guid>>(exceptionListFile);
+                }
+                catch (Exception ex)
+                {
+                    Trace.Info($"Unable to deserialize exception list {ex}");
+                    exceptionList = new List<Guid>();
+                }
+            }
+
+            return exceptionList.ToHashSet();
+        }
+
+        private JObject GetTaskJson(Pipelines.TaskStepDefinitionReference task)
+        {
+            string taskJsonPath = Path.Combine(GetDirectory(task), "task.json");
+            string taskJsonText = File.ReadAllText(taskJsonPath);
+            return JObject.Parse(taskJsonText);
+        }
+
         private void ExtractZip(String zipFile, String destinationDirectory)
         {
             ZipFile.ExtractToDirectory(zipFile, destinationDirectory);
@@ -335,6 +484,20 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 HostContext.GetDirectory(WellKnownDirectory.TaskZips),
                 $"{task.Name}_{task.Id}_{task.Version}.zip"); // TODO: Move to shared string.
         }
+
+        private Definition GetTaskDefiniton(Pipelines.TaskStep task)
+        {
+            // Initialize the definition wrapper object.
+            var definition = new Definition() { Directory = GetDirectory(task.Reference), ZipPath = GetTaskZipPath(task.Reference) };
+
+            // Deserialize the JSON.
+            string file = Path.Combine(definition.Directory, Constants.Path.TaskJsonFile);
+            Trace.Info($"Loading task definition '{file}'.");
+            string json = File.ReadAllText(file);
+            definition.Data = JsonConvert.DeserializeObject<DefinitionData>(json);
+
+            return definition;
+        }
     }
 
     public sealed class Definition
@@ -342,6 +505,68 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public DefinitionData Data { get; set; }
         public string Directory { get; set; }
         public string ZipPath { get; set; }
+
+        public TaskVersion GetPowerShellSDKVersion()
+        {
+            var modulePath = Path.Combine(Directory, "ps_modules", "VstsTaskSdk", "VstsTaskSdk.psd1");
+            if (!File.Exists(modulePath))
+            {
+                return null;
+            }
+
+            var versionLine = File.ReadAllLines(modulePath).FirstOrDefault(x => x.Contains("ModuleVersion"));
+            if (string.IsNullOrEmpty(versionLine))
+            {
+                return null;
+            }
+
+            var verRegex = new Regex(@"\d+\.\d+\.\d+");
+            if (!verRegex.IsMatch(versionLine))
+            {
+                return null;
+            }
+
+            var version = new TaskVersion(verRegex.Match(versionLine).Value)
+            {
+                IsTest = new Regex("(?i)(preview|test)").IsMatch(versionLine)
+            };
+
+            return version;
+        }
+
+        public TaskVersion GetNodeSDKVersion()
+        {
+            var modulePath = Path.Combine(Directory, "node_modules", "azure-pipelines-task-lib", "package.json");
+            if (!File.Exists(modulePath))
+            {
+                return null;
+            }
+
+            string versionProp;
+            try
+            {
+                var file = File.ReadAllText(modulePath);
+                JObject json = JObject.Parse(file);
+                versionProp = json["version"].ToString();
+            }
+            catch
+            {
+                return null;
+            }
+
+            var verRegex = new Regex(@"\d+\.\d+\.\d+");
+            if (!verRegex.IsMatch(versionProp))
+            {
+                return null;
+            }
+
+            var version = new TaskVersion(verRegex.Match(versionProp).Value)
+            {
+                IsTest = new Regex("(?i)(preview|test)").IsMatch(versionProp)
+            };
+
+            return version;
+        }
     }
 
     public sealed class DefinitionData
@@ -381,6 +606,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         private NodeHandlerData _node;
         private Node10HandlerData _node10;
         private Node16HandlerData _node16;
+        private Node20_1HandlerData _node20_1;
         private PowerShellHandlerData _powerShell;
         private PowerShell3HandlerData _powerShell3;
         private PowerShellExeHandlerData _powerShellExe;
@@ -446,6 +672,20 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             set
             {
                 _node16 = value;
+                Add(value);
+            }
+        }
+
+        public Node20_1HandlerData Node20_1
+        {
+            get
+            {
+                return _node20_1;
+            }
+
+            set
+            {
+                _node20_1 = value;
                 Add(value);
             }
         }
@@ -624,21 +864,25 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
     public sealed class NodeHandlerData : BaseNodeHandlerData
     {
-        public override int Priority => 3;
+        public override int Priority => 4;
     }
 
     public sealed class Node10HandlerData : BaseNodeHandlerData
     {
-        public override int Priority => 2;
+        public override int Priority => 3;
     }
     public sealed class Node16HandlerData : BaseNodeHandlerData
+    {
+        public override int Priority => 2;
+    }
+    public sealed class Node20_1HandlerData : BaseNodeHandlerData
     {
         public override int Priority => 1;
     }
 
     public sealed class PowerShell3HandlerData : HandlerData
     {
-        public override int Priority => 4;
+        public override int Priority => 5;
     }
 
     public sealed class PowerShellHandlerData : HandlerData
@@ -656,7 +900,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
         }
 
-        public override int Priority => 5;
+        public override int Priority => 6;
 
         public string WorkingDirectory
         {
@@ -687,7 +931,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
         }
 
-        public override int Priority => 6;
+        public override int Priority => 7;
 
         public string WorkingDirectory
         {
@@ -744,7 +988,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
         }
 
-        public override int Priority => 6;
+        public override int Priority => 7;
 
         public string ScriptType
         {
@@ -801,7 +1045,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
         }
 
-        public override int Priority => 7;
+        public override int Priority => 8;
 
         public string WorkingDirectory
         {
@@ -813,6 +1057,18 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             set
             {
                 SetInput(nameof(WorkingDirectory), value);
+            }
+        }
+
+        public string DisableInlineExecution
+        {
+            get
+            {
+                return GetInput(nameof(DisableInlineExecution));
+            }
+            set
+            {
+                SetInput(nameof(DisableInlineExecution), value);
             }
         }
     }

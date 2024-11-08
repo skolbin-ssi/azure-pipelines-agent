@@ -12,6 +12,7 @@ using System.Text;
 using System.Xml;
 using System.Security.Cryptography.X509Certificates;
 using Microsoft.VisualStudio.Services.Agent.Util;
+using Agent.Sdk.Knob;
 
 namespace Agent.Plugins.Repository
 {
@@ -29,25 +30,29 @@ namespace Agent.Plugins.Repository
             }
         }
 
-        // When output is redirected, TF.exe writes output using the current system code page
-        // (i.e. CP_ACP or code page 0). E.g. code page 1252 on an en-US box.
-        protected override Encoding OutputEncoding => StringUtil.GetSystemEncoding();
+        // We ship a special version of TF.exe which uses UTF-8 instead of default encoding to support all the Unicode characters
+        // to comply with GB18030. Mainstream TF.exe uses default system encoding for redirected output.
+        protected override Encoding OutputEncoding => Encoding.UTF8;
 
         protected override string Switch => "/";
 
         public static readonly int RetriesOnFailure = 3;
 
-        public string FilePath => Path.Combine(ExecutionContext.Variables.GetValueOrDefault("Agent.HomeDirectory")?.Value, "externals", "tf", "tf.exe");
+        private string TfPath => AgentKnobs.InstallLegacyTfExe.GetValue(ExecutionContext).AsBoolean()
+            ? Path.Combine(ExecutionContext.Variables.GetValueOrDefault("Agent.HomeDirectory")?.Value, "externals", "tf-legacy")
+            : Path.Combine(ExecutionContext.Variables.GetValueOrDefault("Agent.HomeDirectory")?.Value, "externals", "tf");
 
-        private string AppConfigFile => Path.Combine(ExecutionContext.Variables.GetValueOrDefault("Agent.HomeDirectory")?.Value, "externals", "tf", "tf.exe.config");
+        public string FilePath => Path.Combine(TfPath, "tf.exe");
 
-        private string AppConfigRestoreFile => Path.Combine(ExecutionContext.Variables.GetValueOrDefault("Agent.HomeDirectory")?.Value, "externals", "tf", "tf.exe.config.restore");
+        private string AppConfigFile => Path.Combine(TfPath, "tf.exe.config");
+
+        private string AppConfigRestoreFile => Path.Combine(TfPath, "tf.exe.config.restore");
 
         // TODO: Remove AddAsync after last-saved-checkin-metadata problem is fixed properly.
         public async Task AddAsync(string localPath)
         {
             ArgUtil.NotNullOrEmpty(localPath, nameof(localPath));
-            await RunPorcelainCommandAsync(FormatFlags.OmitCollectionUrl, "vc", "add", localPath);
+            await RunPorcelainCommandAsync(FormatTags.OmitCollectionUrl, "vc", "add", localPath);
         }
 
         public void CleanupProxySetting()
@@ -66,13 +71,13 @@ namespace Agent.Plugins.Repository
         public async Task GetAsync(string localPath, bool quiet = false)
         {
             ArgUtil.NotNullOrEmpty(localPath, nameof(localPath));
-            await RunCommandAsync(FormatFlags.OmitCollectionUrl, quiet, RetriesOnFailure, "vc", "get", $"/version:{SourceVersion}", "/recursive", "/overwrite", localPath);
+            await RunCommandAsync(FormatTags.OmitCollectionUrl, quiet, RetriesOnFailure, "vc", "get", $"/version:{SourceVersion}", "/recursive", "/overwrite", localPath);
         }
 
         public string ResolvePath(string serverPath)
         {
             ArgUtil.NotNullOrEmpty(serverPath, nameof(serverPath));
-            string localPath = RunPorcelainCommandAsync(FormatFlags.OmitCollectionUrl, "vc", "resolvePath", serverPath).GetAwaiter().GetResult();
+            string localPath = RunPorcelainCommandAsync(FormatTags.OmitCollectionUrl, "vc", "resolvePath", serverPath).GetAwaiter().GetResult();
             return localPath?.Trim() ?? string.Empty;
         }
 
@@ -84,7 +89,7 @@ namespace Agent.Plugins.Repository
         //
         // The current approach taken is: allow the exception to bubble. The TfsVCSourceProvider
         // will catch the exception, log it as a warning, throw away the workspace, and re-clone.
-        public async Task ScorchAsync() => await RunCommandAsync(FormatFlags.OmitCollectionUrl, "vc", "scorch", SourcesDirectory, "/recursive", "/diff", "/unmapped");
+        public async Task ScorchAsync() => await RunCommandAsync(FormatTags.OmitCollectionUrl, "vc", "scorch", SourcesDirectory, "/recursive", "/diff", "/unmapped");
 
         public void SetupProxy(string proxyUrl, string proxyUsername, string proxyPassword)
         {
@@ -173,11 +178,11 @@ namespace Agent.Plugins.Repository
             // TODO: Remove parameter "move" after last-saved-checkin-metadata problem is fixed properly.
             if (move)
             {
-                await RunPorcelainCommandAsync(FormatFlags.OmitCollectionUrl, "vc", "shelve", "/move", "/replace", "/recursive", $"/comment:@{commentFile}", shelveset, SourcesDirectory);
+                await RunPorcelainCommandAsync(FormatTags.OmitCollectionUrl, "vc", "shelve", "/move", "/replace", "/recursive", $"/comment:@{commentFile}", shelveset, SourcesDirectory);
                 return;
             }
 
-            await RunPorcelainCommandAsync(FormatFlags.OmitCollectionUrl, "vc", "shelve", "/saved", "/replace", "/recursive", $"/comment:@{commentFile}", shelveset, SourcesDirectory);
+            await RunPorcelainCommandAsync(FormatTags.OmitCollectionUrl, "vc", "shelve", "/saved", "/replace", "/recursive", $"/comment:@{commentFile}", shelveset, SourcesDirectory);
         }
 
         public async Task<ITfsVCShelveset> ShelvesetsAsync(string shelveset)
@@ -241,13 +246,13 @@ namespace Agent.Plugins.Repository
         public async Task UndoAsync(string localPath)
         {
             ArgUtil.NotNullOrEmpty(localPath, nameof(localPath));
-            await RunCommandAsync(FormatFlags.OmitCollectionUrl, "vc", "undo", "/recursive", localPath);
+            await RunCommandAsync(FormatTags.OmitCollectionUrl, "vc", "undo", "/recursive", localPath);
         }
 
         public async Task UnshelveAsync(string shelveset, bool failOnNonZeroExitCode = true)
         {
             ArgUtil.NotNullOrEmpty(shelveset, nameof(shelveset));
-            await RunCommandAsync(FormatFlags.OmitCollectionUrl, false, failOnNonZeroExitCode, "vc", "unshelve", shelveset);
+            await RunCommandAsync(FormatTags.OmitCollectionUrl, false, failOnNonZeroExitCode, "vc", "unshelve", shelveset);
         }
 
         public async Task WorkfoldCloakAsync(string serverPath)

@@ -10,6 +10,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.VisualStudio.Services.WebApi;
 using Agent.Sdk.Util;
+using Agent.Sdk.Knob;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -32,7 +33,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             ArgUtil.NotNullOrEmpty(pipeOut, nameof(pipeOut));
             var agentWebProxy = HostContext.GetService<IVstsAgentWebProxy>();
             var agentCertManager = HostContext.GetService<IAgentCertificateManager>();
-            VssUtil.InitializeVssClientSettings(HostContext.UserAgent, agentWebProxy.WebProxy, agentCertManager.VssClientCertificateManager);
+            VssUtil.InitializeVssClientSettings(HostContext.UserAgent, agentWebProxy.WebProxy, agentCertManager.VssClientCertificateManager, agentCertManager.SkipServerCertificateValidation);
 
             var jobRunner = HostContext.CreateService<IJobRunner>();
 
@@ -66,6 +67,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 // Initialize the secret masker and set the thread culture.
                 InitializeSecretMasker(jobMessage);
                 SetCulture(jobMessage);
+
+                if(AgentKnobs.EnableNewSecretMasker.GetValue(HostContext).AsBoolean())
+                {
+                    Trace.Verbose($"{Constants.Variables.Agent.EnableAdditionalMaskingRegexes} is On, adding additional masking regexes");
+                    HostContext.AddAdditionalMaskingRegexes();
+                }
 
                 // Start the job.
                 Trace.Info($"Job message:{Environment.NewLine} {StringUtil.ConvertToJson(WorkerUtilities.ScrubPiiData(jobMessage))}");
@@ -138,6 +145,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     HostContext.SecretMasker.AddValue(secret.Trim(quoteChar), WellKnownSecretAliases.UserSuppliedSecret);
                 }
             }
+
+            // Here we add a trimmed secret value to the dictionary in case of a possible leak through external tools.
+            var trimChars = new char[] { '\r', '\n', ' ' };
+            HostContext.SecretMasker.AddValue(secret.Trim(trimChars), WellKnownSecretAliases.UserSuppliedSecret);
         }
 
         private void InitializeSecretMasker(Pipelines.AgentJobRequestMessage message)

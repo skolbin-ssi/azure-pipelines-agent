@@ -1,9 +1,23 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+using Agent.Sdk;
+using Agent.Sdk.Knob;
+using Azure.Core;
+using Azure.Identity;
+using Microsoft.Identity.Client;
+using Microsoft.TeamFoundation.DistributedTask.WebApi;
+using Microsoft.VisualStudio.Services.Agent.Util;
+using Microsoft.VisualStudio.Services.Agent.Worker.Container;
+using Microsoft.VisualStudio.Services.Agent.Worker.Handlers;
+using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
+using Microsoft.VisualStudio.Services.Common;
+using Microsoft.VisualStudio.Services.WebApi;
+using Microsoft.Win32;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -11,17 +25,6 @@ using System.Net.Http;
 using System.ServiceProcess;
 using System.Threading;
 using System.Threading.Tasks;
-using Agent.Sdk;
-using Agent.Sdk.Knob;
-using Azure.Core;
-using Azure.Identity;
-using Microsoft.TeamFoundation.Work.WebApi;
-using Microsoft.VisualStudio.Services.Agent.Util;
-using Microsoft.VisualStudio.Services.Agent.Worker.Container;
-using Microsoft.VisualStudio.Services.Common;
-using Microsoft.Win32;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -35,6 +38,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
     public class ContainerOperationProvider : AgentService, IContainerOperationProvider
     {
         private const string _nodeJsPathLabel = "com.azure.dev.pipelines.agent.handler.node.path";
+        private const string c_tenantId = "tenantid";
+        private const string c_clientId = "servicePrincipalId";
+        private const string c_activeDirectoryServiceEndpointResourceId = "activeDirectoryServiceEndpointResourceId";
+        private const string c_workloadIdentityFederationScheme = "WorkloadIdentityFederation";
+        private const string c_managedServiceIdentityScheme = "ManagedServiceIdentity";
+
         private IDockerCommandManager _dockerManger;
         private string _containerNetwork;
 
@@ -163,7 +172,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             CancellationToken cancellationToken = executionContext.CancellationToken;
             Trace.Entering();
             // Check environment variable for debugging
-            var envVar = System.Environment.GetEnvironmentVariable("DEBUG_MSI_LOGIN_INFO");
+            var envVar = Environment.GetEnvironmentVariable("DEBUG_MSI_LOGIN_INFO");
             // Future: Set this client id. This is the MSI client ID.
             ChainedTokenCredential credential = envVar == "1"
                 ? new ChainedTokenCredential(new ManagedIdentityCredential(clientId: null), new VisualStudioCredential(), new AzureCliCredential())
@@ -174,6 +183,61 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }), cancellationToken);
 
             return accessToken.Token.ToString();
+        }
+
+        private async Task<string> GetAccessTokenUsingWorkloadIdentityFederation(IExecutionContext executionContext, ServiceEndpoint registryEndpoint)
+        {
+            ArgumentNullException.ThrowIfNull(executionContext);
+            ArgumentNullException.ThrowIfNull(registryEndpoint);
+
+            CancellationToken cancellationToken = executionContext.CancellationToken;
+            Trace.Entering();
+
+            var tenantId = string.Empty;
+            if (!registryEndpoint.Authorization?.Parameters?.TryGetValue(c_tenantId, out tenantId) ?? false)
+            {
+                throw new InvalidOperationException($"Could not read {c_tenantId}");
+            }
+
+            var clientId = string.Empty;
+            if (!registryEndpoint.Authorization?.Parameters?.TryGetValue(c_clientId, out clientId) ?? false)
+            {
+                throw new InvalidOperationException($"Could not read {c_clientId}");
+            }
+
+            var resourceId = string.Empty;
+            if (!registryEndpoint.Data?.TryGetValue(c_activeDirectoryServiceEndpointResourceId, out resourceId) ?? false)
+            {
+                throw new InvalidOperationException($"Could not read {c_activeDirectoryServiceEndpointResourceId}");
+            }
+
+            var app = ConfidentialClientApplicationBuilder.Create(clientId)
+                .WithAuthority(AzureCloudInstance.AzurePublic, tenantId)
+                .WithClientAssertion(async (AssertionRequestOptions options) =>
+                {
+                    var systemConnection = executionContext.Endpoints.SingleOrDefault(x => string.Equals(x.Name, WellKnownServiceEndpointNames.SystemVssConnection, StringComparison.Ordinal));
+                    ArgUtil.NotNull(systemConnection, nameof(systemConnection));
+                    VssCredentials vssCredentials = VssUtil.GetVssCredential(systemConnection);
+                    var collectionUri = new Uri(executionContext.Variables.System_CollectionUrl);
+                    using VssConnection vssConnection = VssUtil.CreateConnection(collectionUri, vssCredentials, trace: Trace);
+                    TaskHttpClient taskClient = vssConnection.GetClient<TaskHttpClient>();
+
+                    var idToken = await taskClient.CreateOidcTokenAsync(
+                        scopeIdentifier: executionContext.Variables.System_TeamProjectId ?? throw new ArgumentException("Unknown team Project ID"),
+                        hubName: Enum.GetName(typeof(HostTypes), executionContext.Variables.System_HostType),
+                        planId: new Guid(executionContext.Variables.System_PlanId),
+                        jobId: new Guid(executionContext.Variables.System_JobId),
+                        serviceConnectionId: registryEndpoint.Id,
+                        claims: null,
+                        cancellationToken: cancellationToken
+                    );
+
+                    return idToken.OidcToken;
+                })
+                .Build();
+
+            var authenticationResult = await app.AcquireTokenForClient(new string[] { $"{resourceId}/.default" }).ExecuteAsync(cancellationToken);
+            return authenticationResult.AccessToken;
         }
 
         private async Task<string> GetAcrPasswordFromAADToken(IExecutionContext executionContext, string AADToken, string tenantId, string registryServer, string loginServer)
@@ -232,6 +296,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             {
                 throw new NotSupportedException("Could not acquire ACR token from given AAD token. Please check that the necessary access is provided and try again.");
             }
+
+            // Mark retrieved password as secret
+            HostContext.SecretMasker.AddValue(AcrPassword);
+
             return AcrPassword;
         }
 
@@ -289,15 +357,24 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     }
 
                     registryServer = $"https://{loginServer}";
-                    if (string.Equals(authType, "ManagedServiceIdentity", StringComparison.OrdinalIgnoreCase))
+                    if (string.Equals(authType, c_managedServiceIdentityScheme, StringComparison.OrdinalIgnoreCase))
                     {
                         string tenantId = string.Empty;
-                        registryEndpoint.Authorization?.Parameters?.TryGetValue("tenantid", out tenantId);
+                        registryEndpoint.Authorization?.Parameters?.TryGetValue(c_tenantId, out tenantId);
                         // Documentation says to pass username through this way
                         username = Guid.Empty.ToString("D");
                         string AADToken = await GetMSIAccessToken(executionContext);
                         executionContext.Debug("Successfully retrieved AAD token using the MSI authentication scheme.");
                         // change to getting password from string
+                        password = await GetAcrPasswordFromAADToken(executionContext, AADToken, tenantId, registryServer, loginServer);
+                    }
+                    else if (string.Equals(authType, c_workloadIdentityFederationScheme, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string tenantId = string.Empty;
+                        registryEndpoint.Authorization?.Parameters?.TryGetValue(c_tenantId, out tenantId);
+                        username = Guid.Empty.ToString("D");
+                        string AADToken = await GetAccessTokenUsingWorkloadIdentityFederation(executionContext, registryEndpoint);
+                        executionContext.Debug("Successfully retrieved AAD token using the workload identity federation authentication scheme.");
                         password = await GetAcrPasswordFromAADToken(executionContext, AADToken, tenantId, registryServer, loginServer);
                     }
                     else
@@ -406,22 +483,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
             if (container.ImageOS != PlatformUtil.OS.Windows)
             {
-                string defaultWorkingDirectory = executionContext.Variables.Get(Constants.Variables.System.DefaultWorkingDirectory);
-                defaultWorkingDirectory = container.TranslateContainerPathForImageOS(PlatformUtil.HostOS, container.TranslateToContainerPath(defaultWorkingDirectory));
-                if (string.IsNullOrEmpty(defaultWorkingDirectory))
-                {
-                    throw new NotSupportedException(StringUtil.Loc("ContainerJobRequireSystemDefaultWorkDir"));
-                }
-
-                string workingDirectory = IOUtil.GetDirectoryName(defaultWorkingDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), container.ImageOS);
-                string mountWorkingDirectory = container.TranslateToHostPath(workingDirectory);
-                executionContext.Debug($"Default Working Directory {defaultWorkingDirectory}");
-                executionContext.Debug($"Working Directory {workingDirectory}");
-                executionContext.Debug($"Mount Working Directory {mountWorkingDirectory}");
-                if (!string.IsNullOrEmpty(workingDirectory))
-                {
-                    container.MountVolumes.Add(new MountVolume(mountWorkingDirectory, workingDirectory, readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
-                }
+                string workspace = executionContext.Variables.Get(Constants.Variables.Pipeline.Workspace);
+                workspace = container.TranslateContainerPathForImageOS(PlatformUtil.HostOS, container.TranslateToContainerPath(workspace));
+                string mountWorkspace = container.TranslateToHostPath(workspace);
+                executionContext.Debug($"Workspace: {workspace}");
+                executionContext.Debug($"Mount Workspace: {mountWorkspace}");
+                container.MountVolumes.Add(new MountVolume(mountWorkspace, workspace, readOnly: container.isReadOnlyVolume(Constants.DefaultContainerMounts.Work)));
 
                 container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Temp), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Temp))));
                 container.MountVolumes.Add(new MountVolume(HostContext.GetDirectory(WellKnownDirectory.Tasks), container.TranslateToContainerPath(HostContext.GetDirectory(WellKnownDirectory.Tasks)),
@@ -458,6 +525,22 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 container.MountVolumes.Add(new MountVolume(taskKeyFile, container.TranslateToContainerPath(taskKeyFile)));
             }
 
+            bool useNode20ToStartContainer = AgentKnobs.UseNode20ToStartContainer.GetValue(executionContext).AsBoolean();
+            bool useAgentNode = false;
+
+            string labelContainerStartupUsingNode20 = "container-startup-using-node-20";
+            string labelContainerStartupUsingNode16 = "container-startup-using-node-16";
+            string labelContainerStartupFailed = "container-startup-failed";
+
+            string containerNodePath(string nodeFolder)
+            {
+                return container.TranslateToContainerPath(Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Externals), nodeFolder, "bin", $"node{IOUtil.ExeExtension}"));
+            }
+
+            string nodeContainerPath = containerNodePath(NodeHandler.NodeFolder);
+            string node16ContainerPath = containerNodePath(NodeHandler.Node16Folder);
+            string node20ContainerPath = containerNodePath(NodeHandler.Node20_1Folder);
+
             if (container.IsJobContainer)
             {
                 // See if this container brings its own Node.js
@@ -465,30 +548,35 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                                                                     dockerObject: container.ContainerImage,
                                                                     options: $"--format=\"{{{{index .Config.Labels \\\"{_nodeJsPathLabel}\\\"}}}}\"");
 
-                string node;
+                string nodeSetInterval(string node)
+                {
+                    return $"'{node}' -e 'setInterval(function(){{}}, 24 * 60 * 60 * 1000);'";
+                }
+
+                string useDoubleQuotes(string value)
+                {
+                    return value.Replace('\'', '"');
+                }
+
                 if (!string.IsNullOrEmpty(container.CustomNodePath))
                 {
-                    node = container.CustomNodePath;
+                    container.ContainerCommand = useDoubleQuotes(nodeSetInterval(container.CustomNodePath));
+                    container.ResultNodePath = container.CustomNodePath;
+                }
+                else if (PlatformUtil.RunningOnMacOS || (PlatformUtil.RunningOnWindows && container.ImageOS == PlatformUtil.OS.Linux))
+                {
+                    // require container to have node if running on macOS, or if running on Windows and attempting to run Linux container
+                    container.CustomNodePath = "node";
+                    container.ContainerCommand = useDoubleQuotes(nodeSetInterval(container.CustomNodePath));
+                    container.ResultNodePath = container.CustomNodePath;
                 }
                 else
                 {
-                    node = container.TranslateToContainerPath(Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Externals), "node", "bin", $"node{IOUtil.ExeExtension}"));
-
-                    // if on Mac OS X, require container to have node
-                    if (PlatformUtil.RunningOnMacOS)
-                    {
-                        container.CustomNodePath = "node";
-                        node = container.CustomNodePath;
-                    }
-                    // if running on Windows, and attempting to run linux container, require container to have node
-                    else if (PlatformUtil.RunningOnWindows && container.ImageOS == PlatformUtil.OS.Linux)
-                    {
-                        container.CustomNodePath = "node";
-                        node = container.CustomNodePath;
-                    }
+                    useAgentNode = true;
+                    string sleepCommand = useNode20ToStartContainer ? $"'{node20ContainerPath}' --version && echo '{labelContainerStartupUsingNode20}' && {nodeSetInterval(node20ContainerPath)} || '{node16ContainerPath}' --version && echo '{labelContainerStartupUsingNode16}' && {nodeSetInterval(node16ContainerPath)} || echo '{labelContainerStartupFailed}'" : nodeSetInterval(nodeContainerPath);
+                    container.ContainerCommand = PlatformUtil.RunningOnWindows ? $"cmd.exe /c call {useDoubleQuotes(sleepCommand)}" : $"bash -c \"{sleepCommand}\"";
+                    container.ResultNodePath = nodeContainerPath;
                 }
-                string sleepCommand = $"\"{node}\" -e \"setInterval(function(){{}}, 24 * 60 * 60 * 1000);\"";
-                container.ContainerCommand = sleepCommand;
             }
 
             container.ContainerId = await _dockerManger.DockerCreate(executionContext, container);
@@ -520,6 +608,56 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     }
 
                     executionContext.Warning($"Docker container {container.ContainerId} is not in running state.");
+                }
+                else if (useAgentNode && useNode20ToStartContainer)
+                {
+                    bool containerStartupCompleted = false;
+                    int containerStartupTimeoutInMilliseconds = 10000;
+                    int delayInMilliseconds = 100;
+                    int checksCount = 0;
+
+                    while (true)
+                    {
+                        List<string> containerLogs = await _dockerManger.GetDockerLogs(executionContext, container.ContainerId);
+
+                        foreach (string logLine in containerLogs)
+                        {
+                            if (logLine.Contains(labelContainerStartupUsingNode20))
+                            {
+                                executionContext.Debug("Using Node 20 for container startup.");
+                                containerStartupCompleted = true;
+                                container.ResultNodePath = node20ContainerPath;
+                                break;
+                            }
+                            else if (logLine.Contains(labelContainerStartupUsingNode16))
+                            {
+                                executionContext.Warning("Can not run Node 20 in container. Falling back to Node 16 for container startup.");
+                                containerStartupCompleted = true;
+                                container.ResultNodePath = node16ContainerPath;
+                                break;
+                            }
+                            else if (logLine.Contains(labelContainerStartupFailed))
+                            {
+                                executionContext.Error("Can not run both Node 20 and Node 16 in container. Container startup failed.");
+                                containerStartupCompleted = true;
+                                break;
+                            }
+                        }
+
+                        if (containerStartupCompleted)
+                        {
+                            break;
+                        }
+
+                        checksCount++;
+                        if (checksCount * delayInMilliseconds > containerStartupTimeoutInMilliseconds)
+                        {
+                            executionContext.Warning("Can not get startup status from container.");
+                            break;
+                        }
+
+                        await Task.Delay(delayInMilliseconds);
+                    }
                 }
             }
             catch (Exception ex)
@@ -606,20 +744,96 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         useHostGroupId = true;
                     }
 
-                    if (string.IsNullOrEmpty(containerUserName)) // Create a new user with same UID as on the host
+                    bool isAlpineBasedImage = false;
+                    string detectAlpineMessage = "Alpine-based image detected.";
+                    string detectAlpineCommand = $"bash -c \"if [[ -e '/etc/alpine-release' ]]; then echo '{detectAlpineMessage}'; fi\"";
+                    List<string> detectAlpineOutput = await DockerExec(executionContext, container.ContainerId, detectAlpineCommand);
+                    if (detectAlpineOutput.Contains(detectAlpineMessage))
                     {
-                        string userNameSuffix = "_azpcontainer";
+                        Trace.Info(detectAlpineMessage);
+                        isAlpineBasedImage = true;
+                    }
+
+                    // List of commands
+                    Func<string, string> addGroup;
+                    Func<string, string, string> addGroupWithId;
+                    Func<string, string, string> addUserWithId;
+                    Func<string, string, string, string> addUserWithIdAndGroup;
+                    Func<string, string, string> addUserToGroup;
+
+                    bool useShadowIfAlpine = false;
+
+                    if (isAlpineBasedImage)
+                    {
+                        List<string> shadowInfoOutput = await DockerExec(executionContext, container.ContainerId, "apk list --installed | grep shadow");
+                        bool shadowPreinstalled = false;
+
+                        foreach (string shadowInfoLine in shadowInfoOutput)
+                        {
+                            if (shadowInfoLine.Contains("{shadow}", StringComparison.Ordinal))
+                            {
+                                Trace.Info("The 'shadow' package is preinstalled and therefore will be used.");
+                                shadowPreinstalled = true;
+                                break;
+                            }
+                        }
+
+                        bool userIdIsOutsideAdduserCommandRange = Int64.Parse(container.CurrentUserId) > 256000;
+
+                        if (userIdIsOutsideAdduserCommandRange && !shadowPreinstalled)
+                        {
+                            Trace.Info("User ID is outside the range of the 'adduser' command, therefore the 'shadow' package will be installed and used.");
+
+                            try
+                            {
+                                await DockerExec(executionContext, container.ContainerId, "apk add shadow");
+                            }
+                            catch (InvalidOperationException)
+                            {
+                                throw new InvalidOperationException(StringUtil.Loc("ApkAddShadowFailed"));
+                            }
+                        }
+
+                        useShadowIfAlpine = shadowPreinstalled || userIdIsOutsideAdduserCommandRange;
+                    }
+
+                    if (isAlpineBasedImage && !useShadowIfAlpine)
+                    {
+                        addGroup = (groupName) => $"addgroup {groupName}";
+                        addGroupWithId = (groupName, groupId) => $"addgroup -g {groupId} {groupName}";
+                        addUserWithId = (userName, userId) => $"adduser -D -u {userId} {userName}";
+                        addUserWithIdAndGroup = (userName, userId, groupName) => $"adduser -D -G {groupName} -u {userId} {userName}";
+                        addUserToGroup = (userName, groupName) => $"addgroup {userName} {groupName}";
+                    }
+                    else
+                    {
+                        addGroup = (groupName) => $"groupadd {groupName}";
+                        addGroupWithId = (groupName, groupId) => $"groupadd -g {groupId} {groupName}";
+                        addUserWithId = (userName, userId) => $"useradd -m -u {userId} {userName}";
+                        addUserWithIdAndGroup = (userName, userId, groupName) => $"useradd -m -g {groupName} -u {userId} {userName}";
+                        addUserToGroup = (userName, groupName) => $"usermod -a -G {groupName} {userName}";
+                    }
+
+                    if (string.IsNullOrEmpty(containerUserName))
+                    {
+                        string nameSuffix = "_azpcontainer";
+
                         // Linux allows for a 32-character username
-                        containerUserName = KeepAllowedLength(container.CurrentUserName, 32, userNameSuffix);
-                        string fallback = $"useradd -m -u {container.CurrentUserId} {containerUserName}";
-                        if (useHostGroupId) // Create a new user with the same UID and the same GID as on the host
+                        containerUserName = KeepAllowedLength(container.CurrentUserName, 32, nameSuffix);
+
+                        // Create a new user with same UID as on the host
+                        string fallback = addUserWithId(containerUserName, container.CurrentUserId);
+
+                        if (useHostGroupId)
                         {
                             try
                             {
                                 // Linux allows for a 32-character groupname
-                                string containerGroupName = KeepAllowedLength(container.CurrentGroupName, 32, userNameSuffix);
-                                await DockerExec(executionContext, container.ContainerId, $"groupadd -g {container.CurrentGroupId} {containerGroupName}");
-                                await DockerExec(executionContext, container.ContainerId, $"useradd -m -g {container.CurrentGroupId} -u {container.CurrentUserId} {containerUserName}");
+                                string containerGroupName = KeepAllowedLength(container.CurrentGroupName, 32, nameSuffix);
+
+                                // Create a new user with the same UID and the same GID as on the host
+                                await DockerExec(executionContext, container.ContainerId, addGroupWithId(containerGroupName, container.CurrentGroupId));
+                                await DockerExec(executionContext, container.ContainerId, addUserWithIdAndGroup(containerUserName, container.CurrentUserId, containerGroupName));
                             }
                             catch (Exception ex) when (ex is InvalidOperationException)
                             {
@@ -635,12 +849,13 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
                     executionContext.Output(StringUtil.Loc("GrantContainerUserSUDOPrivilege", containerUserName));
 
-                    // Create a new group for giving sudo permission
                     string sudoGroupName = "azure_pipelines_sudo";
-                    await DockerExec(executionContext, container.ContainerId, $"groupadd {sudoGroupName}");
+
+                    // Create a new group for giving sudo permission
+                    await DockerExec(executionContext, container.ContainerId, addGroup(sudoGroupName));
 
                     // Add the new created user to the new created sudo group.
-                    await DockerExec(executionContext, container.ContainerId, $"usermod -a -G {sudoGroupName} {containerUserName}");
+                    await DockerExec(executionContext, container.ContainerId, addUserToGroup(containerUserName, sudoGroupName));
 
                     // Allow the new sudo group run any sudo command without providing password.
                     await DockerExec(executionContext, container.ContainerId, $"su -c \"echo '%{sudoGroupName} ALL=(ALL:ALL) NOPASSWD:ALL' >> /etc/sudoers\"");
@@ -692,10 +907,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         {
                             // create a new group with same gid
                             existingGroupName = "azure_pipelines_docker";
-                            await DockerExec(executionContext, container.ContainerId, $"groupadd -g {dockerSockGroupId} {existingGroupName}");
+                            await DockerExec(executionContext, container.ContainerId, addGroupWithId(existingGroupName, dockerSockGroupId));
                         }
                         // Add the new created user to the docker socket group.
-                        await DockerExec(executionContext, container.ContainerId, $"usermod -a -G {existingGroupName} {containerUserName}");
+                        await DockerExec(executionContext, container.ContainerId, addUserToGroup(containerUserName, existingGroupName));
 
                         // if path to node is just 'node', with no path, let's make sure it is actually there
                         if (string.Equals(container.CustomNodePath, "node", StringComparison.OrdinalIgnoreCase))
@@ -711,6 +926,33 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                                 throw new InvalidOperationException($"Unable to get node version on container {container.ContainerId}. No output from node -v");
                             }
                         }
+                    }
+
+                    if (PlatformUtil.RunningOnLinux)
+                    {
+                        bool useNode20InUnsupportedSystem = AgentKnobs.UseNode20InUnsupportedSystem.GetValue(executionContext).AsBoolean();
+
+                        if (!useNode20InUnsupportedSystem)
+                        {
+                            var node20 = container.TranslateToContainerPath(Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Externals), NodeHandler.Node20_1Folder, "bin", $"node{IOUtil.ExeExtension}"));
+
+                            string node20TestCmd = $"bash -c \"{node20} -v\"";
+                            List<string> nodeVersionOutput = await DockerExec(executionContext, container.ContainerId, node20TestCmd, noExceptionOnError: true);
+
+                            container.NeedsNode16Redirect = WorkerUtilities.IsCommandResultGlibcError(executionContext, nodeVersionOutput, out string nodeInfoLine);
+
+                            if (container.NeedsNode16Redirect)
+                            {
+                                PublishTelemetry(
+                                    executionContext,
+                                    new Dictionary<string, string>
+                                    {
+                                        {  "ContainerNode20to16Fallback", container.NeedsNode16Redirect.ToString() }
+                                    }
+                                );
+                            }
+                        }
+
                     }
 
                     if (!string.IsNullOrEmpty(containerUserName))
@@ -856,7 +1098,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             }
         }
 
-        private async Task<List<string>> DockerExec(IExecutionContext context, string containerId, string command)
+        private async Task<List<string>> DockerExec(IExecutionContext context, string containerId, string command, bool noExceptionOnError = false)
         {
             Trace.Info($"Docker-exec is going to execute: `{command}`; container id: `{containerId}`");
             List<string> output = new List<string>();
@@ -874,7 +1116,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             if (exitCode != 0)
             {
                 Trace.Error(message);
-                throw new InvalidOperationException(message);
+                if (!noExceptionOnError)
+                {
+                    throw new InvalidOperationException(message);
+                }
             }
             Trace.Info(message);
             return output;
@@ -890,12 +1135,14 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         {
             if (PlatformUtil.RunningOnWindows)
             {
+#pragma warning disable CA1416 // SupportedOSPlatform checks not respected in lambda usage
                 // service CExecSvc is Container Execution Agent.
                 ServiceController[] scServices = ServiceController.GetServices();
                 if (scServices.Any(x => String.Equals(x.ServiceName, "cexecsvc", StringComparison.OrdinalIgnoreCase) && x.Status == ServiceControllerStatus.Running))
                 {
                     throw new NotSupportedException(StringUtil.Loc("AgentAlreadyInsideContainer"));
                 }
+#pragma warning restore CA1416
             }
             else
             {
@@ -942,6 +1189,23 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             {
                 throw new ArgumentOutOfRangeException(@"HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ReleaseId");
             }
+        }
+
+        private void PublishTelemetry(
+            IExecutionContext executionContext,
+            object telemetryData,
+            string feature = nameof(ContainerOperationProvider))
+        {
+            var cmd = new Command("telemetry", "publish")
+            {
+                Data = JsonConvert.SerializeObject(telemetryData, Formatting.None)
+            };
+            cmd.Properties.Add("area", "PipelinesTasks");
+            cmd.Properties.Add("feature", feature);
+
+            var publishTelemetryCmd = new TelemetryCommandExtension();
+            publishTelemetryCmd.Initialize(HostContext);
+            publishTelemetryCmd.ProcessCommand(executionContext, cmd);
         }
     }
 }

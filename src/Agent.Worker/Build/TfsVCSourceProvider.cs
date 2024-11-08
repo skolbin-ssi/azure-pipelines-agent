@@ -2,11 +2,14 @@
 // Licensed under the MIT License.
 
 using Agent.Sdk;
+
 using Microsoft.TeamFoundation.Build.WebApi;
 using Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
 using Microsoft.VisualStudio.Services.Agent.Util;
+
 using Newtonsoft.Json;
+
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -14,6 +17,7 @@ using System.Linq;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Agent.Sdk.Knob;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
 {
@@ -85,7 +89,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             if (PlatformUtil.RunningOnWindows)
             {
                 // Set TFVC_BUILDAGENT_POLICYPATH
-                string policyDllPath = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.ServerOM), "Microsoft.TeamFoundation.VersionControl.Controls.dll");
+                string vstsomPath = AgentKnobs.InstallLegacyTfExe.GetValue(executionContext).AsBoolean()
+                    ? HostContext.GetDirectory(WellKnownDirectory.ServerOMLegacy)
+                    : HostContext.GetDirectory(WellKnownDirectory.ServerOM);
+
+                string policyDllPath = Path.Combine(vstsomPath, "Microsoft.TeamFoundation.VersionControl.Controls.dll");
                 ArgUtil.File(policyDllPath, nameof(policyDllPath));
                 const string policyPathEnvKey = "TFVC_BUILDAGENT_POLICYPATH";
                 executionContext.Output(StringUtil.Loc("SetEnvVar", policyPathEnvKey));
@@ -405,7 +413,15 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                         // Cleanup the comment file.
                         if (File.Exists(commentFile))
                         {
-                            File.Delete(commentFile);
+                            try
+                            {
+                               await IOUtil.DeleteFileWithRetry(commentFile, cancellationToken);
+                            }
+                            catch (Exception ex)
+                            {
+                                Trace.Warning($"Unable to delete comment file, ex:{ex.GetType()}");
+                                Trace.Error(ex);
+                            }
                         }
                     }
                 }

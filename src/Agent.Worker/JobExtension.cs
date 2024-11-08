@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.TeamFoundation.DistributedTask.Expressions;
 using Microsoft.TeamFoundation.DistributedTask.WebApi;
@@ -13,6 +14,8 @@ using System.Linq;
 using System.Diagnostics;
 using Agent.Sdk;
 using Agent.Sdk.Knob;
+using Newtonsoft.Json;
+using Microsoft.VisualStudio.Services.Agent.Worker.Telemetry;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -72,6 +75,30 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     context.Start();
                     context.Section(StringUtil.Loc("StepStarting", StringUtil.Loc("InitializeJob")));
 
+                    PackageVersion agentVersion = new PackageVersion(BuildConstants.AgentPackage.Version);
+
+                    if (!AgentKnobs.Net8UnsupportedOsWarning.GetValue(context).AsBoolean())
+                    {
+                        // Check if a system supports .NET 8
+                        try
+                        {
+                            Trace.Verbose("Checking if your system supports .NET 8");
+
+                            // Check version of the system
+                            if (!await PlatformUtil.IsNetVersionSupported("net8"))
+                            {
+                                string systemId = PlatformUtil.GetSystemId();
+                                SystemVersion systemVersion = PlatformUtil.GetSystemVersion();
+                                context.Warning(StringUtil.Loc("UnsupportedOsVersionByNet8", $"{systemId} {systemVersion}"));
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Trace.Error($"Error has occurred while checking if system supports .NET 8: {ex}");
+                            context.Warning(ex.Message);
+                        }
+                    }
+
                     // Set agent version variable.
                     context.SetVariable(Constants.Variables.Agent.Version, BuildConstants.AgentPackage.Version);
                     context.Output(StringUtil.Loc("AgentNameLog", context.Variables.Get(Constants.Variables.Agent.Name)));
@@ -80,13 +107,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
                     // Machine specific setup info
                     OutputSetupInfo(context);
-
-                    string imageVersion = System.Environment.GetEnvironmentVariable(Constants.ImageVersionVariable);
-                    if (imageVersion != null)
-                    {
-                        context.Output(StringUtil.Loc("ImageVersionLog", imageVersion));
-                    }
-
+                    OutputImageVersion(context);
+                    PublishKnobsInfo(jobContext);
                     context.Output(StringUtil.Loc("UserNameLog", System.Environment.UserName));
 
                     // Print proxy setting information for better diagnostic experience
@@ -100,10 +122,33 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     Trace.Info($"Run initial step from extension {this.GetType().Name}.");
                     InitializeJobExtension(context, message?.Steps, message?.Workspace);
 
+                    if (AgentKnobs.ForceCreateTasksDirectory.GetValue(context).AsBoolean())
+                    {
+                        var tasksDir = HostContext.GetDirectory(WellKnownDirectory.Tasks);
+                        try
+                        {
+                            Trace.Info($"Pre-creating {tasksDir} directory");
+                            Directory.CreateDirectory(tasksDir);
+                            IOUtil.ValidateExecutePermission(tasksDir);
+                        }
+                        catch (Exception ex)
+                        {
+                            Trace.Error(ex);
+                            context.Error(ex);
+                        }
+                    }
+
                     // Download tasks if not already in the cache
                     Trace.Info("Downloading task definitions.");
                     var taskManager = HostContext.GetService<ITaskManager>();
                     await taskManager.DownloadAsync(context, message.Steps);
+
+                    if (!AgentKnobs.DisableNode6Tasks.GetValue(context).AsBoolean() && !PlatformUtil.RunningOnAlpine)
+                    {
+                        Trace.Info("Downloading Node 6 runner.");
+                        var nodeUtil = new NodeJsUtil(HostContext);
+                        await nodeUtil.DownloadNodeRunnerAsync(context, register.Token);
+                    }
 
                     // Parse all Task conditions.
                     Trace.Info("Parsing all task's condition inputs.");
@@ -166,6 +211,25 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     }
                     context.Output("Finished checking job knob settings.");
 
+                    // Ensure that we send git telemetry before potential path env changes during the pipeline execution
+                    var isSelfHosted = StringUtil.ConvertToBoolean(jobContext.Variables.Get(Constants.Variables.Agent.IsSelfHosted));
+                    if (PlatformUtil.RunningOnWindows && isSelfHosted)
+                    {
+                        try
+                        {
+                            var windowsPreinstalledGitCommand = jobContext.AsyncCommands.Find(c => c != null && c.Name == Constants.AsyncExecution.Commands.Names.WindowsPreinstalledGitTelemetry);
+                            if (windowsPreinstalledGitCommand != null)
+                            {
+                                await windowsPreinstalledGitCommand.WaitAsync();
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            // Log the error
+                            Trace.Info($"Caught exception from async command WindowsPreinstalledGitTelemetry: {ex}");
+                        }
+                    }
+
                     if (PlatformUtil.RunningOnWindows)
                     {
                         // This is for internal testing and is not publicly supported. This will be removed from the agent at a later time.
@@ -185,6 +249,29 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                             prepareStep.Condition = ExpressionManager.Succeeded;
                             preJobSteps.Add(prepareStep);
                         }
+
+                        string gitVersion = null;
+
+                        if (AgentKnobs.UseGit2_39_4.GetValue(jobContext).AsBoolean())
+                        {
+                            gitVersion = "2.39.4";
+                        }
+                        else if (AgentKnobs.UseGit2_42_0_2.GetValue(jobContext).AsBoolean())
+                        {
+                            gitVersion = "2.42.0.2";
+                        }
+
+                        if (gitVersion is not null)
+                        {
+                            context.Debug($"Downloading Git v{gitVersion}");
+                            var gitManager = HostContext.GetService<IGitManager>();
+                            await gitManager.DownloadAsync(context, gitVersion);
+                        }
+                    }
+
+                    if (AgentKnobs.InstallLegacyTfExe.GetValue(jobContext).AsBoolean())
+                    {
+                        await TfManager.DownloadLegacyTfToolsAsync(context);
                     }
 
                     // build up 3 lists of steps, pre-job, job, post-job
@@ -201,11 +288,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         preJobSteps.Add(new JobExtensionRunner(runAsync: containerProvider.StartContainersAsync,
                                                                           condition: ExpressionManager.Succeeded,
                                                                           displayName: StringUtil.Loc("InitializeContainer"),
-                                                                          data: (object)containers));
+                                                                          data: containers));
                         postJobStepsBuilder.Push(new JobExtensionRunner(runAsync: containerProvider.StopContainersAsync,
                                                                         condition: ExpressionManager.Always,
                                                                         displayName: StringUtil.Loc("StopContainer"),
-                                                                        data: (object)containers));
+                                                                        data: containers));
                     }
 
                     Dictionary<Guid, List<TaskRestrictions>> taskRestrictionsMap = new Dictionary<Guid, List<TaskRestrictions>>();
@@ -283,7 +370,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     }
 
                     ArgUtil.NotNull(jobContext, nameof(jobContext)); // I am not sure why this is needed, but static analysis flagged all uses of jobContext below this point
-                    // create execution context for all pre-job steps
+                                                                     // create execution context for all pre-job steps
                     foreach (var step in preJobSteps)
                     {
                         if (PlatformUtil.RunningOnWindows && step is ManagementScriptStep)
@@ -379,6 +466,16 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         }
                     }
 
+                    if (AgentKnobs.Rosetta2Warning.GetValue(jobContext).AsBoolean())
+                    {
+                        using (var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)))
+                        {
+                            if (await PlatformUtil.IsRunningOnAppleSiliconAsX64Async(timeout.Token))
+                            {
+                                jobContext.Warning(StringUtil.Loc("Rosetta2Warning"));
+                            }
+                        }
+                    }
                     List<IStep> steps = new List<IStep>();
                     steps.AddRange(preJobSteps);
                     steps.AddRange(jobSteps);
@@ -395,7 +492,6 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                         // Set the VSTS_PROCESS_LOOKUP_ID env variable.
                         context.SetVariable(Constants.ProcessLookupId, _processLookupId, false, false);
                         context.Output("Start tracking orphan processes.");
-
                         // Take a snapshot of current running processes
                         Dictionary<int, Process> processes = SnapshotProcesses();
                         foreach (var proc in processes)
@@ -411,10 +507,22 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 catch (OperationCanceledException ex) when (jobContext.CancellationToken.IsCancellationRequested)
                 {
                     // Log the exception and cancel the JobExtension Initialization.
-                    Trace.Error($"Caught cancellation exception from JobExtension Initialization: {ex}");
-                    context.Error(ex);
-                    context.Result = TaskResult.Canceled;
-                    throw;
+                    if (AgentKnobs.FailJobWhenAgentDies.GetValue(jobContext).AsBoolean() &&
+                        HostContext.AgentShutdownToken.IsCancellationRequested)
+                    {
+                        PublishAgentShutdownTelemetry(jobContext, context);
+                        Trace.Error($"Caught Agent Shutdown exception from JobExtension Initialization: {ex.Message}");
+                        context.Error(ex);
+                        context.Result = TaskResult.Failed;
+                        throw;
+                    }
+                    else
+                    {
+                        Trace.Error($"Caught cancellation exception from JobExtension Initialization: {ex}");
+                        context.Error(ex);
+                        context.Result = TaskResult.Canceled;
+                        throw;
+                    }
                 }
                 catch (Exception ex)
                 {
@@ -430,6 +538,18 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                     context.Complete();
                 }
             }
+        }
+
+        private void PublishAgentShutdownTelemetry(IExecutionContext jobContext, IExecutionContext childContext)
+        {
+            var telemetryData = new Dictionary<string, string>
+            {
+                { "JobId", childContext?.Variables?.System_JobId?.ToString() ?? string.Empty },
+                { "JobResult", TaskResult.Failed.ToString() },
+                { "TracePoint", "110" },
+            };
+
+            PublishTelemetry(jobContext, telemetryData, "AgentShutdown");
         }
 
         public async Task FinalizeJob(IExecutionContext jobContext)
@@ -559,6 +679,29 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             return snapshot;
         }
 
+        private void OutputImageVersion(IExecutionContext context)
+        {
+            string imageVersion = System.Environment.GetEnvironmentVariable(Constants.ImageVersionVariable);
+            string jobId = context?.Variables?.System_JobId?.ToString() ?? string.Empty;
+
+            if (imageVersion != null)
+            {
+                context.Output(StringUtil.Loc("ImageVersionLog", imageVersion));
+            }
+            else
+            {
+                Trace.Info($"Image version for job id {jobId} is not set");
+            }
+
+            var telemetryData = new Dictionary<string, string>()
+            {
+                { "JobId", jobId },
+                { "ImageVersion", imageVersion },
+            };
+
+            PublishTelemetry(context, telemetryData, "ImageVersionTelemetry");
+        }
+
         private void OutputSetupInfo(IExecutionContext context)
         {
             try
@@ -591,5 +734,49 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 Trace.Error(ex);
             }
         }
+
+        private void PublishKnobsInfo(IExecutionContext jobContext)
+        {
+            var telemetryData = new Dictionary<string, string>()
+            {
+                { "JobId", jobContext?.Variables?.System_JobId }
+            };
+
+            foreach (var knob in Knob.GetAllKnobsFor<AgentKnobs>())
+            {
+                var value = knob.GetValue(jobContext);
+                if (value.Source.GetType() != typeof(BuiltInDefaultKnobSource))
+                {
+                    var stringValue = HostContext.SecretMasker.MaskSecrets(value.AsString());
+                    telemetryData.Add($"{knob.Name}-{value.Source.GetDisplayString()}", stringValue);
+                }
+            }
+
+            PublishTelemetry(jobContext, telemetryData, "KnobsStatus");
+        }
+
+        private void PublishTelemetry(IExecutionContext context, Dictionary<string, string> telemetryData, string feature)
+        {
+            try
+            {
+                var cmd = new Command("telemetry", "publish");
+                cmd.Data = JsonConvert.SerializeObject(telemetryData, Formatting.None);
+                cmd.Properties.Add("area", "PipelinesTasks");
+                cmd.Properties.Add("feature", feature);
+
+                var publishTelemetryCmd = new TelemetryCommandExtension();
+                publishTelemetryCmd.Initialize(HostContext);
+                publishTelemetryCmd.ProcessCommand(context, cmd);
+            }
+            catch (Exception ex)
+            {
+                Trace.Warning($"Unable to publish telemetry data. Exception: {ex}");
+            }
+        }
+    }
+
+    public class UnsupportedOsException : Exception
+    {
+        public UnsupportedOsException(string message) : base(message) { }
     }
 }

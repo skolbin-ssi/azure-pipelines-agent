@@ -9,10 +9,9 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using Agent.Sdk.SecretMasking;
 using BuildWebApi = Microsoft.TeamFoundation.Build.WebApi;
-using Microsoft.TeamFoundation.DistributedTask.Logging;
 using Newtonsoft.Json.Linq;
-using Agent.Sdk.Util;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker
 {
@@ -59,23 +58,23 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             return val;
         }
 
-        public IEnumerable<KeyValuePair<string, string>> Public
+        public IEnumerable<Variable> Public
         {
             get
             {
                 return _expanded.Values
                     .Where(x => !x.Secret)
-                    .Select(x => new KeyValuePair<string, string>(x.Name, StringTranslator(x.Value)));
+                    .Select(x => new Variable(x.Name, StringTranslator(x.Value), x.Secret, x.ReadOnly, x.PreserveCase));
             }
         }
 
-        public IEnumerable<KeyValuePair<string, string>> Private
+        public IEnumerable<Variable> Private
         {
             get
             {
                 return _expanded.Values
                     .Where(x => x.Secret)
-                    .Select(x => new KeyValuePair<string, string>(x.Name, StringTranslator(x.Value)));
+                    .Select(x => new Variable(x.Name, StringTranslator(x.Value), x.Secret, x.ReadOnly, x.PreserveCase));
             }
         }
 
@@ -101,7 +100,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             {
                 if (!string.IsNullOrWhiteSpace(variable.Key))
                 {
-                    variables.Add(new Variable(variable.Key, variable.Value.Value, variable.Value.IsSecret, variable.Value.IsReadOnly));
+                    variables.Add(new Variable(variable.Key, variable.Value.Value, variable.Value.IsSecret, variable.Value.IsReadOnly, preserveCase: false));
                 }
             }
 
@@ -133,6 +132,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         }
 
         public string Agent_ProxyUrl => Get(Constants.Variables.Agent.ProxyUrl);
+
+        public bool? Agent_SslSkipCertValidation => GetBoolean(Constants.Variables.Agent.SslSkipCertValidation);
 
         public string Agent_ProxyUsername => Get(Constants.Variables.Agent.ProxyUsername);
 
@@ -205,6 +206,9 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public bool? System_EnableAccessToken => GetBoolean(Constants.Variables.System.EnableAccessToken);
 
         public HostTypes System_HostType => GetEnum<HostTypes>(Constants.Variables.System.HostType) ?? HostTypes.None;
+
+        public string System_PlanId => Get(Constants.Variables.System.PlanId);
+
         public string System_JobId => Get(Constants.Variables.System.JobId);
 
         public string System_PhaseDisplayName => Get(Constants.Variables.System.PhaseDisplayName);
@@ -218,6 +222,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public Guid? System_TeamProjectId => GetGuid(BuildWebApi.BuildVariables.TeamProjectId);
 
         public string System_TFCollectionUrl => Get(WellKnownDistributedTaskVariables.TFCollectionUrl);
+
+        public string System_CollectionUrl => Get(WellKnownDistributedTaskVariables.CollectionUrl);
 
         public string System_StageName => Get(Constants.Variables.System.StageName);
 
@@ -275,7 +281,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             Constants.Variables.Agent.Name,
         };
 
-        public void ExpandValues(IDictionary<string, string> target)
+        public void ExpandValues(IDictionary<string, string> target, bool enableVariableInputTrimming = false)
         {
             ArgUtil.NotNull(target, nameof(target));
             _trace.Entering();
@@ -286,7 +292,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 source[variable.Name] = value;
             }
 
-            VarUtil.ExpandValues(_hostContext, source, target);
+            VarUtil.ExpandValues(_hostContext, source, target, enableVariableInputTrimming);
         }
 
         public string ExpandValue(string name, string value)
@@ -398,13 +404,13 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
             lock (_setLock)
             {
                 Variable dummy;
-                _expanded.Remove(name, out dummy);
+                 _expanded.Remove(name, out dummy);
                 _nonexpanded.Remove(name, out dummy);
                 _trace.Verbose($"Unset '{name}'");
             }
         }
 
-        public void Set(string name, string val, bool secret = false, bool readOnly = false)
+        public void Set(string name, string val, bool secret = false, bool readOnly = false, bool preserveCase = false)
         {
             // Validate the args.
             ArgUtil.NotNullOrEmpty(name, nameof(name));
@@ -437,7 +443,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 // Store the value as-is to the expanded dictionary and the non-expanded dictionary.
                 // It is not expected that the caller needs to store an non-expanded value and then
                 // retrieve the expanded value in the same context.
-                var variable = new Variable(name, val, secret, readOnly);
+                var variable = new Variable(name, val, secret, readOnly, preserveCase);
                 _expanded[name] = variable;
                 _nonexpanded[name] = variable;
                 _trace.Verbose($"Set '{name}' = '{val}'");
@@ -447,8 +453,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public bool IsReadOnly(string name)
         {
             Variable existingVariable = null;
-            if (!_expanded.TryGetValue(name, out existingVariable))
-            {
+            if (!_expanded.TryGetValue(name, out existingVariable)) {
                 _nonexpanded.TryGetValue(name, out existingVariable);
             }
 
@@ -490,6 +495,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                 {
                     bool secret = _nonexpanded[name].Secret;
                     bool readOnly = _nonexpanded[name].ReadOnly;
+                    bool preserveCase = _nonexpanded[name].PreserveCase;
                     _trace.Verbose($"Processing expansion for variable: '{name}'");
 
                     // This algorithm handles recursive replacement using a stack.
@@ -591,7 +597,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
                                 }
 
                                 // Set the expanded value.
-                                expanded[state.Name] = new Variable(state.Name, state.Value, secret, readOnly);
+                                expanded[state.Name] = new Variable(state.Name, state.Value, secret, readOnly, preserveCase);
                                 _trace.Verbose($"Set '{state.Name}' = '{state.Value}'");
                             }
 
@@ -630,11 +636,11 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
 
             foreach (var var in this.Public)
             {
-                target[var.Key] = translation(var.Value);
+                target[var.Name] = translation(var.Value);
             }
             foreach (var var in this.Private)
             {
-                target[var.Key] = new VariableValue(translation(var.Value), true);
+                target[var.Name] = new VariableValue(translation(var.Value), true);
             }
         }
 
@@ -670,14 +676,16 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker
         public bool Secret { get; private set; }
         public string Value { get; private set; }
         public bool ReadOnly { get; private set; }
+        public bool PreserveCase { get; private set; }
 
-        public Variable(string name, string value, bool secret, bool readOnly)
+        public Variable(string name, string value, bool secret, bool readOnly, bool preserveCase)
         {
             ArgUtil.NotNullOrEmpty(name, nameof(name));
             Name = name;
             Value = value ?? string.Empty;
             Secret = secret;
             ReadOnly = readOnly;
+            PreserveCase = preserveCase;
         }
     }
 }

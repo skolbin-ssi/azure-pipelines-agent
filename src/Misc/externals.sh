@@ -5,14 +5,22 @@ LAYOUT_DIR=$3
 L1_MODE=$4
 
 INCLUDE_NODE6=${INCLUDE_NODE6:-true}
+INCLUDE_NODE10=${INCLUDE_NODE10:-true}
 
 CONTAINER_URL=https://vstsagenttools.blob.core.windows.net/tools
+
 NODE_URL=https://nodejs.org/dist
+if [[ "$PACKAGERUNTIME" == "linux-musl-x64" ]]; then
+    NODE_URL=https://unofficial-builds.nodejs.org/download/release
+    INCLUDE_NODE6=false
+fi
+
 NODE_VERSION="6.17.1"
 NODE10_VERSION="10.24.1"
-NODE16_VERSION="16.17.1"
-MINGIT_VERSION="2.39.1"
-LFS_VERSION="2.13.3"
+NODE16_VERSION="16.20.2"
+NODE20_VERSION="20.17.0"
+MINGIT_VERSION="2.47.0.2"
+LFS_VERSION="3.4.0"
 
 get_abs_path() {
   # exploits the fact that pwd will print abs path when no args
@@ -27,15 +35,20 @@ else
 fi
 
 function failed() {
-   local error=${1:-Undefined error}
-   echo "Failed: $error" >&2
-   exit 1
+    local error=${1:-Undefined error}
+    local command_identifier=$2
+    echo "Failed: $error" >&2
+    if [[ $command_identifier == 'download_node_alpine_arm64' ]]; then
+        echo "Node for Alpine ARM64 not found in blob storage. If the version of Node (for tasks execution) has been updated, it should be built for Alpine ARM64 and uploaded to blob storage. Read documentation about the agent release for more info."
+    fi
+    exit 1
 }
 
 function checkRC() {
     local rc=$?
+    local command_identifier=$2
     if [ $rc -ne 0 ]; then
-        failed "${1} failed with return code $rc"
+        failed "${1} failed with return code $rc" $command_identifier
     fi
 }
 
@@ -47,6 +60,7 @@ function acquireExternalTool() {
                             # of the nested TEE-CLC-14.0.4 directory are moved up one directory, and then the empty directory
                             # TEE-CLC-14.0.4 is removed.
     local dont_uncompress=$4
+    local tool_name=$5
 
     # Extract the portion of the URL after the protocol. E.g. vstsagenttools.blob.core.windows.net/tools/pdbstr/1/pdbstr.zip
     local relative_url="${download_source#*://}"
@@ -75,7 +89,7 @@ function acquireExternalTool() {
             #      -S Show error. With -s, make curl show errors when they occur
             #      -L Follow redirects (H)
             #      -o FILE    Write to FILE instead of stdout
-            curl --retry 10 -fkSL -o "$partial_target" "$download_source" 2>"${download_target}_download.log" || checkRC 'curl'
+            curl --retry 10 -fkSL -o "$partial_target" "$download_source" 2>"${download_target}_download.log" || checkRC 'curl' "download_${tool_name}"
 
             # Move the partial file to the download target.
             mv "$partial_target" "$download_target" || checkRC 'mv'
@@ -141,86 +155,84 @@ function acquireExternalTool() {
     fi
 }
 
-# Download the external tools only for Windows.
-if [[ "$PACKAGERUNTIME" == "win-x64" ]]; then
-    acquireExternalTool "$CONTAINER_URL/azcopy/1/azcopy.zip" azcopy
+if [[ "$PACKAGERUNTIME" == "win-x"* ]]; then
+    # Download external tools for Windows.
+
+    BIT="32"
+    if [[ "$PACKAGERUNTIME" == "win-x64" ]]; then
+        BIT="64"
+
+        acquireExternalTool "$CONTAINER_URL/azcopy/1/azcopy.zip" azcopy
+        acquireExternalTool "$CONTAINER_URL/vstshost/m122_887c6659_binding_redirect_patched/vstshost.zip" vstshost
+        acquireExternalTool "$CONTAINER_URL/vstsom/m153_47c0856d_adhoc/vstsom.zip" vstsom
+    fi
+
+    acquireExternalTool "$CONTAINER_URL/mingit/${MINGIT_VERSION}/MinGit-${MINGIT_VERSION}-${BIT}-bit.zip" git
+    acquireExternalTool "$CONTAINER_URL/git-lfs/${LFS_VERSION}/x${BIT}/git-lfs.exe" "git/mingw${BIT}/bin"
     acquireExternalTool "$CONTAINER_URL/pdbstr/1/pdbstr.zip" pdbstr
-    acquireExternalTool "$CONTAINER_URL/mingit/${MINGIT_VERSION}/MinGit-${MINGIT_VERSION}-64-bit.zip" git
-    acquireExternalTool "$CONTAINER_URL/git-lfs/${LFS_VERSION}/x64/git-lfs.exe" git/mingw64/bin
     acquireExternalTool "$CONTAINER_URL/symstore/1/symstore.zip" symstore
-    acquireExternalTool "$CONTAINER_URL/vstshost/m122_887c6659/vstshost.zip" vstshost
-    acquireExternalTool "$CONTAINER_URL/vstsom/m122_887c6659/vstsom.zip" vstsom
-    acquireExternalTool "$CONTAINER_URL/vstsom/m153_d91bed0b/vstsom.zip" tf
+    acquireExternalTool "$CONTAINER_URL/vstsom/m153_47c0856d_adhoc/vstsom.zip" tf
     acquireExternalTool "$CONTAINER_URL/vswhere/2_8_4/vswhere.zip" vswhere
-    if [[ "$INCLUDE_NODE6" == "true" ]]; then
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x64/node.exe" node/bin
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x64/node.lib" node/bin
-    fi
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x64/node.exe" node10/bin
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x64/node.lib" node10/bin
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/win-x64/node.exe" node16/bin
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/win-x64/node.lib" node16/bin
     acquireExternalTool "https://dist.nuget.org/win-x86-commandline/v3.4.4/nuget.exe" nuget
-fi
 
-if [[ "$PACKAGERUNTIME" == "win-x86" ]]; then
-    acquireExternalTool "$CONTAINER_URL/pdbstr/1/pdbstr.zip" pdbstr
-    acquireExternalTool "$CONTAINER_URL/mingit/${MINGIT_VERSION}/MinGit-${MINGIT_VERSION}-32-bit.zip" git
-    acquireExternalTool "$CONTAINER_URL/git-lfs/${LFS_VERSION}/x32/git-lfs.exe" git/mingw32/bin
-    acquireExternalTool "$CONTAINER_URL/symstore/1/symstore.zip" symstore
-    acquireExternalTool "$CONTAINER_URL/vstsom/m153_d91bed0b/vstsom.zip" tf
-    acquireExternalTool "$CONTAINER_URL/vswhere/2_8_4/vswhere.zip" vswhere
     if [[ "$INCLUDE_NODE6" == "true" ]]; then
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x86/node.exe" node/bin
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/win-x86/node.lib" node/bin
+        acquireExternalTool "${NODE_URL}/v${NODE_VERSION}/${PACKAGERUNTIME}/node.exe" node/bin
+        acquireExternalTool "${NODE_URL}/v${NODE_VERSION}/${PACKAGERUNTIME}/node.lib" node/bin
     fi
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x86/node.exe" node10/bin
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/win-x86/node.lib" node10/bin
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/win-x86/node.exe" node16/bin
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/win-x86/node.lib" node16/bin
-    acquireExternalTool "https://dist.nuget.org/win-x86-commandline/v3.4.4/nuget.exe" nuget
-fi
-
-# Download the external tools only for OSX.
-if [[ "$PACKAGERUNTIME" == "osx-x64" ]]; then
-    if [[ "$INCLUDE_NODE6" == "true" ]]; then
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-darwin-x64.tar.gz" node fix_nested_dir
+    if [[ "$INCLUDE_NODE10" == "true" ]]; then
+        acquireExternalTool "${NODE_URL}/v${NODE10_VERSION}/${PACKAGERUNTIME}/node.exe" node10/bin
+        acquireExternalTool "${NODE_URL}/v${NODE10_VERSION}/${PACKAGERUNTIME}/node.lib" node10/bin
     fi
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-darwin-x64.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/node-v${NODE16_VERSION}-darwin-x64.tar.gz" node16 fix_nested_dir
-fi
+    acquireExternalTool "${NODE_URL}/v${NODE16_VERSION}/${PACKAGERUNTIME}/node.exe" node16/bin
+    acquireExternalTool "${NODE_URL}/v${NODE16_VERSION}/${PACKAGERUNTIME}/node.lib" node16/bin
+    acquireExternalTool "${NODE_URL}/v${NODE20_VERSION}/${PACKAGERUNTIME}/node.exe" node20_1/bin
+    acquireExternalTool "${NODE_URL}/v${NODE20_VERSION}/${PACKAGERUNTIME}/node.lib" node20_1/bin
+else
+    # Download external tools for Linux and OSX.
 
-# Download the external tools common across OSX and Linux PACKAGERUNTIMEs.
-if [[ "$PACKAGERUNTIME" == "linux-x64" || "$PACKAGERUNTIME" == "linux-arm" || "$PACKAGERUNTIME" == "linux-arm64" || "$PACKAGERUNTIME" == "osx-x64" || "$PACKAGERUNTIME" == "rhel.6-x64" ]]; then
     acquireExternalTool "$CONTAINER_URL/vso-task-lib/0.5.5/vso-task-lib.tar.gz" vso-task-lib
-fi
 
-# Download the external tools common across Linux PACKAGERUNTIMEs (excluding OSX).
-if [[ "$PACKAGERUNTIME" == "linux-x64" || "$PACKAGERUNTIME" == "rhel.6-x64" ]]; then
-    if [[ "$INCLUDE_NODE6" == "true" ]]; then
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.gz" node fix_nested_dir
+    if [[ "$PACKAGERUNTIME" == "osx-arm64" ]]; then
+        ARCH="darwin-x64"
+        if [[ "$INCLUDE_NODE6" == "true" ]]; then
+            acquireExternalTool "${NODE_URL}/v${NODE_VERSION}/node-v${NODE_VERSION}-${ARCH}.tar.gz" node fix_nested_dir
+        fi
+
+        if [[ "$INCLUDE_NODE10" == "true" ]]; then
+            acquireExternalTool "${NODE_URL}/v${NODE10_VERSION}/node-v${NODE10_VERSION}-${ARCH}.tar.gz" node10 fix_nested_dir
+        fi
+
+        ARCH="darwin-arm64"
+        acquireExternalTool "${NODE_URL}/v${NODE16_VERSION}/node-v${NODE16_VERSION}-${ARCH}.tar.gz" node16 fix_nested_dir
+        acquireExternalTool "${NODE_URL}/v${NODE20_VERSION}/node-v${NODE20_VERSION}-${ARCH}.tar.gz" node20_1 fix_nested_dir
+    elif [[ "$PACKAGERUNTIME" == "linux-musl-arm64" ]]; then
+        ARCH="linux-arm64-musl"
+
+        if [[ "$INCLUDE_NODE10" == "true" ]]; then
+            acquireExternalTool "${CONTAINER_URL}/nodejs/${ARCH}/node-v${NODE10_VERSION}-${ARCH}.tar.gz" node10/bin fix_nested_dir false node_alpine_arm64
+        fi
+
+        acquireExternalTool "${CONTAINER_URL}/nodejs/${ARCH}/node-v${NODE16_VERSION}-${ARCH}.tar.gz" node16/bin fix_nested_dir false node_alpine_arm64
+        acquireExternalTool "${CONTAINER_URL}/nodejs/${ARCH}/node-v${NODE20_VERSION}-${ARCH}.tar.gz" node20_1/bin fix_nested_dir false node_alpine_arm64
+    else
+        case $PACKAGERUNTIME in
+            "linux-musl-x64") ARCH="linux-x64-musl";;
+            "linux-x64") ARCH="linux-x64";;
+            "linux-arm") ARCH="linux-armv7l";;
+            "linux-arm64") ARCH="linux-arm64";;
+            "osx-x64") ARCH="darwin-x64";;
+            *) echo "Unknown PACKAGERUNTIME: ${PACKAGERUNTIME}"; exit 1;;
+        esac
+
+        if [[ "$INCLUDE_NODE6" == "true" ]]; then
+            acquireExternalTool "${NODE_URL}/v${NODE_VERSION}/node-v${NODE_VERSION}-${ARCH}.tar.gz" node fix_nested_dir
+        fi
+        if [[ "$INCLUDE_NODE10" == "true" ]]; then
+            acquireExternalTool "${NODE_URL}/v${NODE10_VERSION}/node-v${NODE10_VERSION}-${ARCH}.tar.gz" node10 fix_nested_dir
+        fi
+        acquireExternalTool "${NODE_URL}/v${NODE16_VERSION}/node-v${NODE16_VERSION}-${ARCH}.tar.gz" node16 fix_nested_dir
+        acquireExternalTool "${NODE_URL}/v${NODE20_VERSION}/node-v${NODE20_VERSION}-${ARCH}.tar.gz" node20_1 fix_nested_dir
     fi
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-linux-x64.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/node-v${NODE16_VERSION}-linux-x64.tar.gz" node16 fix_nested_dir
-fi
-
-if [[ "$PACKAGERUNTIME" == "linux-arm" ]]; then
-    if [[ "$INCLUDE_NODE6" == "true" ]]; then
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-armv7l.tar.gz" node fix_nested_dir
-    fi
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-linux-armv7l.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/node-v${NODE16_VERSION}-linux-armv7l.tar.gz" node16 fix_nested_dir
-fi
-
-if [[ "$PACKAGERUNTIME" == "linux-arm64" ]]; then
-    if [[ "$INCLUDE_NODE6" == "true" ]]; then
-        acquireExternalTool "$NODE_URL/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-arm64.tar.gz" node fix_nested_dir
-    fi
-    acquireExternalTool "$NODE_URL/v${NODE10_VERSION}/node-v${NODE10_VERSION}-linux-arm64.tar.gz" node10 fix_nested_dir
-    acquireExternalTool "$NODE_URL/v${NODE16_VERSION}/node-v${NODE16_VERSION}-linux-arm64.tar.gz" node16 fix_nested_dir
-fi
-
-if [[ "$PACKAGERUNTIME" != "win-x64" && "$PACKAGERUNTIME" != "win-x86" ]]; then
     # remove `npm`, `npx`, `corepack`, and related `node_modules` from the `externals/node*` agent directory
     # they are installed along with node, but agent does not use them
 
@@ -235,6 +247,11 @@ if [[ "$PACKAGERUNTIME" != "win-x64" && "$PACKAGERUNTIME" != "win-x86" ]]; then
     rm "$LAYOUT_DIR/externals/node16/bin/npm"
     rm "$LAYOUT_DIR/externals/node16/bin/npx"
     rm "$LAYOUT_DIR/externals/node16/bin/corepack"
+
+    rm -rf "$LAYOUT_DIR/externals/node20_1/lib"
+    rm "$LAYOUT_DIR/externals/node20_1/bin/npm"
+    rm "$LAYOUT_DIR/externals/node20_1/bin/npx"
+    rm "$LAYOUT_DIR/externals/node20_1/bin/corepack"
 fi
 
 if [[ "$L1_MODE" != "" || "$PRECACHE" != "" ]]; then
@@ -245,8 +262,8 @@ if [[ "$L1_MODE" != "" || "$PRECACHE" != "" ]]; then
 
     # with the current setup of this package there are backslashes so it fails to extract on non-windows at runtime
     # we may need to fix this in the Agent
-    if [[ "$PACKAGERUNTIME" == "win-x64" || "$PACKAGERUNTIME" == "win-x86" ]]; then
+    if [[ "$PACKAGERUNTIME" == "win-x"* ]]; then
         # signed service tree task
-        acquireExternalTool "$CONTAINER_URL/l1Tasks/5515f72c-5faa-4121-8a46-8f42a8f42132.zip" "Tasks" false dont_uncompress
+        acquireExternalTool "$CONTAINER_URL/l1Tasks/d9bafed4-0b18-4f58-0001-86655b4d2ce9.zip" "Tasks" false dont_uncompress
     fi
 fi

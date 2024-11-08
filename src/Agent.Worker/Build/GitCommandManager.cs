@@ -22,6 +22,8 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
 
         bool EnsureGitLFSVersion(Version requiredVersion, bool throwOnNotMatch);
 
+        (string resolvedGitPath, string resolvedGitLfsPath) GetInternalGitPaths();
+
         // setup git execution info, git location, version, useragent, execpath
         Task LoadGitExecutionInfo(IExecutionContext context, bool useBuiltInGit, Dictionary<string, string> gitEnv = null);
 
@@ -160,6 +162,26 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             return _gitLfsVersion >= requiredVersion;
         }
 
+        public (string resolvedGitPath, string resolvedGitLfsPath) GetInternalGitPaths()
+        {
+            string externalsDirectoryPath = HostContext.GetDirectory(WellKnownDirectory.Externals);
+            ArgUtil.NotNullOrEmpty(externalsDirectoryPath, nameof(WellKnownDirectory.Externals));
+
+            string gitPath = Path.Combine(externalsDirectoryPath, "git", "cmd", $"git.exe");
+            string gitLfsPath;
+
+            if (PlatformUtil.BuiltOnX86)
+            {
+                gitLfsPath = Path.Combine(externalsDirectoryPath, "git", "mingw32", "bin", $"git-lfs.exe");
+            }
+            else
+            {
+                gitLfsPath = Path.Combine(externalsDirectoryPath, "git", "mingw64", "bin", $"git-lfs.exe");
+            }
+
+            return (gitPath, gitLfsPath);
+        }
+
         public async Task LoadGitExecutionInfo(IExecutionContext context, bool useBuiltInGit, Dictionary<string, string> gitEnv = null)
         {
             if (gitEnv != null)
@@ -181,8 +203,9 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                 // The Windows agent ships a copy of Git
                 if (PlatformUtil.RunningOnWindows)
                 {
-                    _gitPath = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Externals), "git", "cmd", $"git{IOUtil.ExeExtension}");
-                    _gitLfsPath = Path.Combine(HostContext.GetDirectory(WellKnownDirectory.Externals), "git", PlatformUtil.BuiltOnX86 ? "mingw32" : "mingw64", "bin", "git-lfs.exe");
+                    context.Debug("Git paths are resolving from internal dependencies");
+
+                    (_gitPath, _gitLfsPath) = GetInternalGitPaths();
 
                     // Prepend the PATH.
                     context.Output(StringUtil.Loc("Prepending0WithDirectoryContaining1", Constants.PathVariable, Path.GetFileName(_gitPath)));
@@ -749,10 +772,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             }
 
             // Add the public variables.
-            foreach (KeyValuePair<string, string> pair in context.Variables.Public)
+            foreach (Variable variable in context.Variables.Public)
             {
                 // Add the variable using the formatted name.
-                string formattedKey = VarUtil.ConvertToEnvVariableFormat(pair.Key);
+                string formattedName = VarUtil.ConvertToEnvVariableFormat(variable.Name, variable.PreserveCase);
 
                 // Skip any GIT_TRACE variable since GIT_TRACE will affect ouput from every git command.
                 // This will fail the parse logic for detect git version, remote url, etc.
@@ -761,12 +784,12 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                 //      git version
                 //      11:39:58.295959 git.c:371               trace: built-in: git 'version'
                 //      git version 2.11.1.windows.1
-                if (formattedKey == "GIT_TRACE" || formattedKey.StartsWith("GIT_TRACE_"))
+                if (formattedName == "GIT_TRACE" || formattedName.StartsWith("GIT_TRACE_"))
                 {
                     continue;
                 }
 
-                _gitEnv[formattedKey] = pair.Value ?? string.Empty;
+                _gitEnv[formattedName] = variable.Value ?? string.Empty;
             }
 
             return _gitEnv;

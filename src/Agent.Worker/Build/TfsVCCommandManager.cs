@@ -11,7 +11,6 @@ using System.Text;
 using Microsoft.TeamFoundation.DistributedTask.Pipelines;
 using System.IO;
 using Agent.Sdk.Knob;
-using BuildXL.Cache.ContentStore.Interfaces.Results;
 using System.Linq;
 
 namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
@@ -106,10 +105,10 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
 
         protected Task RunCommandAsync(params string[] args)
         {
-            return RunCommandAsync(FormatFlags.None, args);
+            return RunCommandAsync(FormatTags.None, args);
         }
 
-        protected async Task RunCommandAsync(FormatFlags formatFlags, params string[] args)
+        protected async Task RunCommandAsync(FormatTags formatFlags, params string[] args)
         {
             // Validation.
             ArgUtil.NotNull(args, nameof(args));
@@ -154,27 +153,35 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
 
                 if (useSecureParameterPassing)
                 {
-                    File.Delete(Path.Combine(this.SourcesDirectory, temporaryFileWithCommand));
+                    try
+                    {
+                       await IOUtil.DeleteFileWithRetry(Path.Combine(this.SourcesDirectory, temporaryFileWithCommand), CancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        Trace.Warning($"Unable to delete command via file, ex:{ex.GetType()}");
+                        throw;
+                    }
                 }
             }
         }
 
         protected Task<string> RunPorcelainCommandAsync(params string[] args)
         {
-            return RunPorcelainCommandAsync(FormatFlags.None, args);
+            return RunPorcelainCommandAsync(FormatTags.None, args);
         }
 
         protected Task<string> RunPorcelainCommandAsync(bool ignoreStderr, params string[] args)
         {
-            return RunPorcelainCommandAsync(FormatFlags.None, ignoreStderr, args);
+            return RunPorcelainCommandAsync(FormatTags.None, ignoreStderr, args);
         }
 
-        protected Task<string> RunPorcelainCommandAsync(FormatFlags formatFlags, params string[] args)
+        protected Task<string> RunPorcelainCommandAsync(FormatTags formatFlags, params string[] args)
         {
             return RunPorcelainCommandAsync(formatFlags, false, args);
         }
 
-        protected async Task<string> RunPorcelainCommandAsync(FormatFlags formatFlags, bool ignoreStderr, params string[] args)
+        protected async Task<string> RunPorcelainCommandAsync(FormatTags formatFlags, bool ignoreStderr, params string[] args)
         {
             // Run the command.
             TfsVCPorcelainCommandResult result = await TryRunPorcelainCommandAsync(formatFlags, ignoreStderr, args);
@@ -200,7 +207,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             return temporaryName;
         }
 
-        protected async Task<TfsVCPorcelainCommandResult> TryRunPorcelainCommandAsync(FormatFlags formatFlags, bool ignoreStderr, params string[] args)
+        protected async Task<TfsVCPorcelainCommandResult> TryRunPorcelainCommandAsync(FormatTags formatFlags, bool ignoreStderr, params string[] args)
         {
             // Validation.
             ArgUtil.NotNull(args, nameof(args));
@@ -268,7 +275,15 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                 if (useSecretParameterPassing)
                 {
                     CleanupTfsVCOutput(ref result, formattedArguments);
-                    File.Delete(Path.Combine(this.SourcesDirectory, cmdFileName));
+                    try
+                    {
+                       await IOUtil.DeleteFileWithRetry(Path.Combine(this.SourcesDirectory, cmdFileName), CancellationToken);
+                    }
+                    catch (Exception ex)
+                    {
+                        ExecutionContext.Output($"Unable to delete command via file, ex:{ex.GetType()}");
+                        throw;
+                    }
                 }
 
                 return result;
@@ -285,7 +300,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             command.Output.RemoveAll(item => stringsToRemove.Contains(item));
         }
 
-        private string FormatArguments(FormatFlags formatFlags, params string[] args)
+        private string FormatArguments(FormatTags formatFlags, params string[] args)
         {
             // Validation.
             ArgUtil.NotNull(args, nameof(args));
@@ -312,7 +327,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
             }
 
             // Add the common parameters.
-            if (!formatFlags.HasFlag(FormatFlags.OmitCollectionUrl))
+            if (!formatFlags.HasFlag(FormatTags.OmitCollectionUrl))
             {
                 if (Features.HasFlag(TfsVCFeatures.EscapedUrl))
                 {
@@ -339,7 +354,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                 }
             }
 
-            if (!formatFlags.HasFlag(FormatFlags.OmitLogin))
+            if (!formatFlags.HasFlag(FormatTags.OmitLogin))
             {
                 if (Features.HasFlag(TfsVCFeatures.LoginType))
                 {
@@ -352,7 +367,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
                 }
             }
 
-            if (!formatFlags.HasFlag(FormatFlags.OmitNoPrompt))
+            if (!formatFlags.HasFlag(FormatTags.OmitNoPrompt))
             {
                 formattedArgs.Add($"{Switch}noprompt");
             }
@@ -374,7 +389,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Worker.Build
         }
 
         [Flags]
-        protected enum FormatFlags
+        protected enum FormatTags
         {
             None = 0,
             OmitCollectionUrl = 1,

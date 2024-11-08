@@ -340,6 +340,12 @@ namespace Agent.Plugins.Repository
             // default fetchTags to true unless it's specifically set to false
             bool fetchTags = StringUtil.ConvertToBoolean(executionContext.GetInput(Pipelines.PipelineConstants.CheckoutTaskInputs.FetchTags), true);
 
+            string fetchFilter = executionContext.GetInput(Pipelines.PipelineConstants.CheckoutTaskInputs.FetchFilter);
+
+            string sparseCheckoutDirectories = executionContext.GetInput(Pipelines.PipelineConstants.CheckoutTaskInputs.SparseCheckoutDirectories);
+            string sparseCheckoutPatterns = executionContext.GetInput(Pipelines.PipelineConstants.CheckoutTaskInputs.SparseCheckoutPatterns);
+            bool enableSparseCheckout = !string.IsNullOrWhiteSpace(sparseCheckoutDirectories) || !string.IsNullOrWhiteSpace(sparseCheckoutPatterns);
+
             executionContext.Debug($"repository url={repositoryUrl}");
             executionContext.Debug($"targetPath={targetPath}");
             executionContext.Debug($"sourceBranch={sourceBranch}");
@@ -349,9 +355,11 @@ namespace Agent.Plugins.Repository
             executionContext.Debug($"checkoutNestedSubmodules={checkoutNestedSubmodules}");
             executionContext.Debug($"exposeCred={exposeCred}");
             executionContext.Debug($"fetchDepth={fetchDepth}");
+            executionContext.Debug($"fetchFilter={fetchFilter}");
             executionContext.Debug($"fetchTags={fetchTags}");
             executionContext.Debug($"gitLfsSupport={gitLfsSupport}");
             executionContext.Debug($"acceptUntrustedCerts={acceptUntrustedCerts}");
+            executionContext.Debug($"sparseCheckout={enableSparseCheckout}");
 
             bool schannelSslBackend = StringUtil.ConvertToBoolean(executionContext.Variables.GetValueOrDefault("agent.gituseschannel")?.Value);
             executionContext.Debug($"schannelSslBackend={schannelSslBackend}");
@@ -388,7 +396,7 @@ namespace Agent.Plugins.Repository
             foreach (var variable in executionContext.Variables)
             {
                 // Add the variable using the formatted name.
-                string formattedKey = VarUtil.ConvertToEnvVariableFormat(variable.Key);
+                string formattedKey = VarUtil.ConvertToEnvVariableFormat(variable.Key, preserveCase: false);
                 gitEnv[formattedKey] = variable.Value?.Value ?? string.Empty;
             }
 
@@ -404,7 +412,7 @@ namespace Agent.Plugins.Repository
 
             // Make sure the build machine met all requirements for the git repository
             // For now, the requirement we have are:
-            // 1. git version greater than 2.9  and git-lfs version greater than 2.1 for on-prem tfsgit
+            // 1. git version greater than 2.9 and git-lfs version greater than 2.1 for on-prem tfsgit
             // 2. git version greater than 2.14.2 if use SChannel for SSL backend (Windows only)
             RequirementCheck(executionContext, repository, gitCommandManager);
             string username = string.Empty;
@@ -684,6 +692,8 @@ namespace Agent.Plugins.Repository
                 executionContext.Warning("Unable turn off git auto garbage collection, git fetch operation may trigger auto garbage collection which will affect the performance of fetching.");
             }
 
+            SetGitFeatureFlagsConfiguration(executionContext, gitCommandManager, targetPath);
+
             // always remove any possible left extraheader setting from git config.
             if (await gitCommandManager.GitConfigExist(executionContext, targetPath, $"http.{repositoryUrl.AbsoluteUri}.extraheader"))
             {
@@ -713,8 +723,10 @@ namespace Agent.Plugins.Repository
                 await RemoveGitConfig(executionContext, gitCommandManager, targetPath, $"http.proxy", string.Empty);
             }
 
-            List<string> additionalFetchArgs = new List<string>();
-            List<string> additionalLfsFetchArgs = new List<string>();
+            var additionalFetchFilterOptions = ParseFetchFilterOptions(executionContext, fetchFilter);
+            var additionalFetchArgs = new List<string>();
+            var additionalLfsFetchArgs = new List<string>();
+            var additionalCheckoutArgs = new List<string>();
 
             // Force Git to HTTP/1.1. Otherwise IIS will reject large pushes to Azure Repos due to the large content-length header
             // This is caused by these header limits - https://docs.microsoft.com/en-us/iis/configuration/system.webserver/security/requestfiltering/requestlimits/headerlimits/
@@ -733,6 +745,11 @@ namespace Agent.Plugins.Repository
                     string configKey = "http.extraheader";
                     string args = ComposeGitArgs(executionContext, gitCommandManager, configKey, username, password, useBearerAuthType);
                     additionalFetchArgs.Add(args);
+
+                    if (additionalFetchFilterOptions.Any() && AgentKnobs.AddForceCredentialsToGitCheckout.GetValue(executionContext).AsBoolean())
+                    {
+                        additionalCheckoutArgs.Add(args);
+                    }
                 }
                 else
                 {
@@ -863,6 +880,7 @@ namespace Agent.Plugins.Repository
             string refFetchedByCommit = null;
 
             executionContext.Debug($"fetchDepth : {fetchDepth}");
+            executionContext.Debug($"fetchFilter : {fetchFilter}");
             executionContext.Debug($"fetchByCommit : {fetchByCommit}");
             executionContext.Debug($"sourceVersion : {sourceVersion}");
             executionContext.Debug($"fetchTags : {fetchTags}");
@@ -893,7 +911,7 @@ namespace Agent.Plugins.Repository
                 }
             }
 
-            int exitCode_fetch = await gitCommandManager.GitFetch(executionContext, targetPath, "origin", fetchDepth, fetchTags, additionalFetchSpecs, string.Join(" ", additionalFetchArgs), cancellationToken);
+            int exitCode_fetch = await gitCommandManager.GitFetch(executionContext, targetPath, "origin", fetchDepth, additionalFetchFilterOptions, fetchTags, additionalFetchSpecs, string.Join(" ", additionalFetchArgs), cancellationToken);
             if (exitCode_fetch != 0)
             {
                 throw new InvalidOperationException($"Git fetch failed with exit code: {exitCode_fetch}");
@@ -905,7 +923,7 @@ namespace Agent.Plugins.Repository
             if (fetchByCommit && !string.IsNullOrEmpty(sourceVersion))
             {
                 List<string> commitFetchSpecs = new List<string>() { $"+{sourceVersion}" };
-                exitCode_fetch = await gitCommandManager.GitFetch(executionContext, targetPath, "origin", fetchDepth, fetchTags, commitFetchSpecs, string.Join(" ", additionalFetchArgs), cancellationToken);
+                exitCode_fetch = await gitCommandManager.GitFetch(executionContext, targetPath, "origin", fetchDepth, additionalFetchFilterOptions, fetchTags, commitFetchSpecs, string.Join(" ", additionalFetchArgs), cancellationToken);
                 if (exitCode_fetch != 0)
                 {
                     throw new InvalidOperationException($"Git fetch failed with exit code: {exitCode_fetch}");
@@ -956,8 +974,32 @@ namespace Agent.Plugins.Repository
                 }
             }
 
+            if (AgentKnobs.UseSparseCheckoutInCheckoutTask.GetValue(executionContext).AsBoolean())
+            {
+                if (enableSparseCheckout)
+                {
+                    // Set up sparse checkout
+                    int exitCode_sparseCheckout = await gitCommandManager.GitSparseCheckout(executionContext, targetPath, sparseCheckoutDirectories, sparseCheckoutPatterns, cancellationToken);
+
+                    if (exitCode_sparseCheckout != 0)
+                    {
+                        throw new InvalidOperationException($"Git sparse checkout failed with exit code: {exitCode_sparseCheckout}");
+                    }
+                }
+                else
+                {
+                    // Disable sparse checkout in case it was enabled in a previous checkout
+                    int exitCode_sparseCheckoutDisable = await gitCommandManager.GitSparseCheckoutDisable(executionContext, targetPath, cancellationToken);
+
+                    if (exitCode_sparseCheckoutDisable != 0)
+                    {
+                        throw new InvalidOperationException($"Git sparse checkout disable failed with exit code: {exitCode_sparseCheckoutDisable}");
+                    }
+                }
+            }
+
             // Finally, checkout the sourcesToBuild (if we didn't find a valid git object this will throw)
-            int exitCode_checkout = await gitCommandManager.GitCheckout(executionContext, targetPath, sourcesToBuild, cancellationToken);
+            int exitCode_checkout = await gitCommandManager.GitCheckout(executionContext, targetPath, sourcesToBuild, string.Join(" ", additionalCheckoutArgs), cancellationToken);
             if (exitCode_checkout != 0)
             {
                 // local repository is shallow repository, checkout may fail due to lack of commits history.
@@ -1303,6 +1345,32 @@ namespace Agent.Plugins.Repository
             }
         }
 
+        public async void SetGitFeatureFlagsConfiguration(
+            AgentTaskPluginExecutionContext executionContext,
+            IGitCliManager gitCommandManager,
+            string targetPath)
+        {
+            if (AgentKnobs.UseGitSingleThread.GetValue(executionContext).AsBoolean())
+            {
+                await gitCommandManager.GitConfig(executionContext, targetPath, "pack.threads", "1");
+            }
+
+            if (AgentKnobs.FixPossibleGitOutOfMemoryProblem.GetValue(executionContext).AsBoolean())
+            {
+                await gitCommandManager.GitConfig(executionContext, targetPath, "pack.windowmemory", "256m");
+                await gitCommandManager.GitConfig(executionContext, targetPath, "pack.deltaCacheSize", "256m");
+                await gitCommandManager.GitConfig(executionContext, targetPath, "pack.packSizeLimit", "256m");
+                await gitCommandManager.GitConfig(executionContext, targetPath, "http.postBuffer", "524288000");
+                await gitCommandManager.GitConfig(executionContext, targetPath, "core.packedgitwindowsize", "256m");
+                await gitCommandManager.GitConfig(executionContext, targetPath, "core.packedgitlimit", "256m");
+            }
+
+            if (AgentKnobs.UseGitLongPaths.GetValue(executionContext).AsBoolean())
+            {
+                await gitCommandManager.GitConfig(executionContext, targetPath, "core.longpaths", "true");
+            }
+        }
+
         protected virtual GitCliManager GetCliManager(Dictionary<string, string> gitEnv = null)
         {
             return new GitCliManager(gitEnv);
@@ -1340,6 +1408,59 @@ namespace Agent.Plugins.Repository
                 context.Debug($"The remote.origin.url of the repository under root folder '{repositoryPath}' doesn't matches source repository url.");
                 return false;
             }
+        }
+
+        private IEnumerable<string> ParseFetchFilterOptions(AgentTaskPluginExecutionContext context, string fetchFilter)
+        {
+            if (!AgentKnobs.UseFetchFilterInCheckoutTask.GetValue(context).AsBoolean())
+            {
+                return Enumerable.Empty<string>();
+            }
+
+            if (string.IsNullOrEmpty(fetchFilter))
+            {
+                return Enumerable.Empty<string>();
+            }
+
+            // parse filter and only include valid options
+            var filters = new List<string>();
+            var splitFilter = fetchFilter.Split('+').Where(filter => !string.IsNullOrWhiteSpace(filter)).ToList();
+
+            foreach (string filter in splitFilter)
+            {
+                var parsedFilter = filter.Split(':')
+                    .Where(filter => !string.IsNullOrWhiteSpace(filter))
+                    .Select(filter => filter.Trim())
+                    .ToList();
+
+                if (parsedFilter.Count == 2)
+                {
+                    switch (parsedFilter[0].ToLower())
+                    {
+                        case "tree":
+                            // currently only supporting treeless filter
+                            if (int.TryParse(parsedFilter[1], out int treeSize) && treeSize == 0)
+                            {
+                                filters.Add($"{parsedFilter[0]}:{treeSize}");
+                            }
+                            break;
+
+                        case "blob":
+                            // currently only supporting blobless filter
+                            if (parsedFilter[1].Equals("none", StringComparison.OrdinalIgnoreCase))
+                            {
+                                filters.Add($"{parsedFilter[0]}:{parsedFilter[1]}");
+                            }
+                            break;
+
+                        default:
+                            // either invalid or unsupported git object
+                            break;
+                    }
+                }
+            }
+
+            return filters;
         }
 
         private async Task RunGitStatusIfSystemDebug(AgentTaskPluginExecutionContext executionContext, GitCliManager gitCommandManager, string targetPath)

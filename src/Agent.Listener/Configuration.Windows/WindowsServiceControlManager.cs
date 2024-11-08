@@ -3,6 +3,7 @@
 
 using System;
 using System.IO;
+using System.Runtime.Versioning;
 using System.Security;
 using System.Security.Principal;
 using System.Text;
@@ -11,6 +12,7 @@ using Microsoft.VisualStudio.Services.Agent.Util;
 namespace Microsoft.VisualStudio.Services.Agent.Listener.Configuration
 {
     [ServiceLocator(Default = typeof(WindowsServiceControlManager))]
+    [SupportedOSPlatform("windows")]
     public interface IWindowsServiceControlManager : IAgentService
     {
         void ConfigureService(AgentSettings settings, CommandSettings command);
@@ -18,6 +20,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener.Configuration
         void UnconfigureService();
     }
 
+    [SupportedOSPlatform("windows")]
     public class WindowsServiceControlManager : ServiceControlManager, IWindowsServiceControlManager
     {
         public const string WindowsServiceControllerName = "AgentService.exe";
@@ -77,6 +80,7 @@ namespace Microsoft.VisualStudio.Services.Agent.Listener.Configuration
                     {
                         logonPassword = command.GetWindowsLogonPassword(logonAccount);
                     }
+
                     catch (ArgumentException exception)
                     {
                         Trace.Warning($"LogonAccount {logonAccount} is not managed service account, although you did not specify WindowsLogonPassword - maybe you wanted to use managed service account? Please see https://aka.ms/gmsa for guidelines to set up sMSA/gMSA account. ");

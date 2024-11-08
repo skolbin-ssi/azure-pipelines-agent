@@ -8,28 +8,38 @@
     <ProjectReference Include="..\Agent.Sdk\Agent.Sdk.csproj" />
   </ItemGroup>
 
+  <PropertyGroup>
+    <!-- Suppress warning CA1416: This call site is reachable on all platforms. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="azuredevops-testresultparser" Version="1.0.2" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.4.0" />
     <PackageReference Include="Microsoft.CodeCoverage" Version="16.4.0" />
     <PackageReference Include="Microsoft.TestPlatform.TestHost" Version="16.4.0" GeneratePathProperty="true" />
-    <PackageReference Include="Moq" Version="4.6.36-alpha" />
-    <PackageReference Include="System.Buffers" Version="4.3.0" />
+    <PackageReference Include="Moq" Version="4.20.70" />
     <PackageReference Include="System.Reflection.TypeExtensions" Version="4.4.0" />
     <PackageReference Include="System.Threading.ThreadPool" Version="4.3.0" />
     <PackageReference Include="vss-api-netcore" Version="$(VssApiVersion)" />
     <PackageReference Include="xunit" Version="2.2.0" />
     <PackageReference Include="xunit.runner.visualstudio" Version="2.2.0" />
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="7.0.2" />
+    <PackageReference Include="Microsoft.Azure.Storage.DataMovement" Version="2.0.5" />
+    <PackageReference Include="System.Text.RegularExpressions" Version="4.3.1" />
+    <PackageReference Include="System.Private.Uri" Version="4.3.2" />
+    <PackageReference Include="System.Formats.Asn1" Version="8.0.1" />
   </ItemGroup>
 
   <ItemGroup>
-      <MySourceFiles Include="$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x86\*.dll;$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x86\*.exe;$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x64\*.dll;$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x64\*.exe" />
+    <MySourceFiles Include="$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x86\*.dll;$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x86\*.exe;$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x64\*.dll;$(PkgMicrosoft_TestPlatform_TestHost)\build\netcoreapp2.1\x64\*.exe" />
   </ItemGroup>
 
   <Target Name="CopyFilesL0">
     <Copy SourceFiles="@(MySourceFiles)" DestinationFolder="$(MSBuildProjectDirectory)\bin\Debug\netcoreapp3.1\win-x86" SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
   <Target Name="CopyFilesL1">
-      <Copy SourceFiles="@(MySourceFiles)" DestinationFolder="D:\a\1\s\_l1\bin" SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" Retries="3" RetryDelayMilliseconds="300" />
+    <Copy SourceFiles="@(MySourceFiles)" DestinationFolder="D:\a\1\s\_l1\bin" SkipUnchangedFiles="true" OverwriteReadOnlyFiles="true" Retries="3" RetryDelayMilliseconds="300" />
   </Target>
 </Project>

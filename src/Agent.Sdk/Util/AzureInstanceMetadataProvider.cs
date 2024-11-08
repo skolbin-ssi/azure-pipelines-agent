@@ -16,6 +16,7 @@ namespace Agent.Sdk.Util
         public AzureInstanceMetadataProvider()
         {
             _client = new HttpClient();
+            _client.Timeout = TimeSpan.FromSeconds(5);
         }
 
         public void Dispose()
@@ -55,7 +56,7 @@ namespace Agent.Sdk.Util
                 throw new ObjectDisposedException(nameof(AzureInstanceMetadataProvider));
             }
 
-            HttpRequestMessage request = BuildRequest($"{_azureMetadataEndpoint}/{category}", parameters);
+            using HttpRequestMessage request = BuildRequest($"{_azureMetadataEndpoint}/{category}", parameters);
             HttpResponseMessage response = _client.SendAsync(request).Result;
 
             if (!response.IsSuccessStatusCode)
